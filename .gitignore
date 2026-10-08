@@ -1,0 +1,11 @@
+# Dependências e banco local
+node_modules/
+data/
+
+# Segredos: nunca versionar. O modelo fica em .env.example.
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel

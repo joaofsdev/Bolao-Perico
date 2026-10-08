@@ -1,0 +1,7 @@
+data/
+test/
+scripts/
+README.md
+.env
+.env.*
+!.env.example
