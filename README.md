@@ -8,10 +8,15 @@ servidor no fuso `America/Sao_Paulo`. O navegador só desenha.
 
 ## As regras
 
-**Quem é quem.** Não tem login. No primeiro acesso a pessoa digita um nome; o servidor
-devolve um token aleatório que fica no `localStorage`. Nomes são únicos ignorando
-maiúsculas e minúsculas, e **não existe jeito de trocar de nome** — nenhuma tela,
-nenhum endpoint.
+**Quem é quem.** Não tem login nem senha: o nome é a identificação. A tela inicial pede
+só o nome — se ele já existe, você entra como essa pessoa; se não existe, é criado. O
+mesmo nome funciona em qualquer computador. Nomes são comparados ignorando maiúsculas,
+minúsculas e espaços nas pontas, então `ana` e ` Ana ` entram na mesma Ana. O navegador
+lembra o nome no `localStorage` para não perguntar toda vez, e o botão **Sair** esquece.
+**Não existe jeito de trocar de nome** — nenhuma tela, nenhum endpoint.
+
+A contrapartida de não ter senha: quem souber seu nome pode apostar por você. Num bolão
+entre colegas isso é aceitável; se deixar de ser, o próximo passo é uma senha por nome.
 
 **A aposta.** Um horário `HH:MM` para uma data. Uma aposta por pessoa por dia, e ela
 nunca muda nem some: o banco garante isso com `UNIQUE (user_id, bet_date)` e a API não
@@ -104,7 +109,7 @@ npm run seed -- --force  # apaga o que tem e popula de novo
 npm test
 ```
 
-São 53 testes em dois arquivos, rodando no runner nativo do Node — sem framework.
+São 59 testes em dois arquivos, rodando no runner nativo do Node — sem framework.
 
 `test/rules.test.js` cobre a lógica pura: o exemplo do enunciado, aposta exatamente no
 horário de chegada, empates, dia em que todas as apostas vieram antes da chegada, dia
@@ -117,7 +122,10 @@ e testa as regras ponta a ponta: o corte das 08:30 no segundo exato, data passad
 bloqueada a qualquer hora, data futura liberada a qualquer hora, aposta única por dia
 (inclusive duas requisições simultâneas), apostas escondidas antes das 08:30, chegada
 registrada cedo que não vaza o resultado, encerramento ao meio-dia sem registro, senha
-de admin, e o ranking.
+de admin, e o ranking. Do lado do usuário: nome novo cria, nome existente entra (sem
+caixa, sem espaço nas pontas, com acento composto ou decomposto), duas entradas
+simultâneas com o mesmo nome novo, nome desconhecido que não aposta, e um banco no
+formato antigo, com tokens, cujos usuários e apostas continuam valendo.
 
 O relógio injetado é o que torna isso testável: `createApp()` recebe um `clock`, então
 os testes andam para as 08:29:59 e para as 08:30:00 sem esperar o dia amanhecer.
@@ -145,8 +153,12 @@ devolve a decisão. É por isso que ele é testável inteiro sem subir nada.
 
 | Método | Rota | O que faz |
 | --- | --- | --- |
-| `GET` | `/api/session` | Quem é você (pelo header `x-bolao-token`) e que horas são no servidor. |
-| `POST` | `/api/users` | Entra no bolão com um nome; devolve o token. |
+| `GET` | `/api/session` | Quem é você (pelo header `x-bolao-usuario`) e que horas são no servidor. |
+| `POST` | `/api/users` | Entra com um nome: `200` se já existia, `201` se foi criado. Devolve o nome como está gravado. |
+
+Quem pede se identifica pelo header `x-bolao-usuario`, com o nome passado por
+`encodeURIComponent` (header HTTP não carrega qualquer letra). Nome que não existe não é
+criado pelo caminho: só `POST /api/users` cria usuário.
 | `GET` | `/api/day?date=AAAA-MM-DD` | O retrato do dia: sua aposta, as dos outros (se já liberadas), chegada e vencedor. |
 | `POST` | `/api/bets` | Registra sua aposta do dia. |
 | `GET` | `/api/ranking` | Vitórias e total de apostas por pessoa. |
@@ -265,8 +277,8 @@ docker build -t bolao-perico .
 docker run -d --name bolao -p 3000:3000 -v bolao_data:/data   -e ADMIN_PASSWORD=escolha-uma-senha bolao-perico
 ```
 
-Ponha um proxy na frente (Caddy ou Nginx) para o HTTPS. O token do usuário vive no
-`localStorage` e viaja em um header — em HTTP puro numa rede aberta, ele vai às claras.
+Ponha um proxy na frente (Caddy ou Nginx) para o HTTPS — a senha de admin viaja no
+corpo da requisição, e em HTTP puro numa rede aberta ela vai às claras.
 
 ### Backup
 
@@ -314,3 +326,10 @@ de uma.
 **Por que a migração não encostou nas regras.** `src/rules.js` não lê o relógio nem
 toca no banco, então trocar o banco inteiro não mudou uma linha dele — e os 28 testes
 de `test/rules.test.js` passaram sem alteração. Foi o que tornou a troca barata.
+
+**Por que a coluna `token` ainda existe.** O usuário já foi identificado por um token
+guardado no navegador, e a tabela `users` tem a coluna `token` como `NOT NULL UNIQUE`.
+Hoje ninguém lê essa coluna — quem identifica é `name_lower` —, mas o SQLite não remove
+uma coluna `UNIQUE` sem reconstruir a tabela, e reconstruir `users` num banco cheio de
+apostas não vale o risco. Usuários novos recebem um valor aleatório ali, só para
+satisfazer o schema; bancos antigos e novos seguem idênticos, sem migração nenhuma.

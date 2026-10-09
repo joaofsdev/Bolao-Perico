@@ -16,6 +16,11 @@ const { timeToMinutes, minutesToTime } = require("./rules.js");
  * garantidos pelo schema (UNIQUE), não só pela aplicação.
  */
 
+// token é herança de quando o usuário era identificado por um token guardado
+// no navegador. Hoje ninguém lê essa coluna — quem identifica é name_lower.
+// Ela fica porque o SQLite não remove coluna UNIQUE sem reconstruir a tabela,
+// e reconstruir users num banco cheio de apostas não vale o risco. Assim
+// bancos novos e antigos continuam com o mesmo schema.
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id          INTEGER PRIMARY KEY,
@@ -115,22 +120,19 @@ function createStore(config) {
     migrate: ready,
 
     /** Cria o usuário. Devolve null se o nome já existir (comparação sem caixa). */
-    async createUser(name, token) {
+    async createUser(name) {
       try {
+        // A coluna token continua obrigatória e única: recebe um valor
+        // aleatório só para satisfazer o schema.
         const result = await run(
-          "INSERT INTO users (name, name_lower, token) VALUES (?, ?, ?)",
-          [name, name.toLowerCase(), token],
+          "INSERT INTO users (name, name_lower, token) VALUES (?, ?, lower(hex(randomblob(16))))",
+          [name, name.toLowerCase()],
         );
         return { id: Number(result.lastInsertRowid), name };
       } catch (err) {
         if (isUniqueViolation(err)) return null;
         throw err;
       }
-    },
-
-    async findUserByToken(token) {
-      if (!token) return null;
-      return first("SELECT id, name FROM users WHERE token = ?", [token]);
     },
 
     async findUserByName(name) {

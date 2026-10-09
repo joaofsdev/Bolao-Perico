@@ -10,8 +10,6 @@
  * Respeita o ambiente: sem TURSO_DATABASE_URL popula o arquivo local.
  */
 
-const crypto = require('node:crypto');
-
 const { createStore, configFromEnv } = require('../src/db.js');
 const { loadDotEnv } = require('../src/boot.js');
 const { nowInSaoPaulo, addDays } = require('../src/rules.js');
@@ -38,7 +36,7 @@ async function main() {
   const nomes = ['Ana', 'Bruno', 'Carla', 'Diego', 'Elisa', 'Fábio'];
   const ids = new Map();
   for (const nome of nomes) {
-    const user = await store.createUser(nome, crypto.randomBytes(24).toString('base64url'));
+    const user = await store.createUser(nome);
     ids.set(nome, user.id);
   }
 

@@ -9,11 +9,14 @@
    pelo deslocamento medido contra o relógio do servidor.
    =========================================================================== */
 
-const TOKEN_KEY = 'bolao-perico-token';
+/** O nome é a identificação: o navegador só lembra dele para não perguntar de novo. */
+const NAME_KEY = 'bolao-perico-nome';
+/** Onde ficava o token, quando o usuário era preso a um navegador. Só para limpar. */
+const LEGACY_TOKEN_KEY = 'bolao-perico-token';
 const REFRESH_MS = 30_000;
 
 const state = {
-  token: null,
+  /** Nome como está gravado no servidor; vai em todo pedido. */
   userName: null,
   /** Data selecionada, "YYYY-MM-DD". */
   date: null,
@@ -30,7 +33,7 @@ const $ = (id) => document.getElementById(id);
 const dom = {};
 for (const id of [
   'gate', 'gate-form', 'gate-name', 'gate-error', 'gate-submit',
-  'app', 'whoami-name',
+  'app', 'whoami-name', 'logout',
   'clock', 'clock-label', 'clock-readout', 'clock-foot',
   'day-prev', 'day-next', 'day-input', 'day-today',
   'bet-panel', 'bet-form', 'bet-time', 'bet-submit', 'bet-stamp', 'bet-stamp-time',
@@ -57,7 +60,8 @@ class ApiError extends Error {
 async function api(method, path, body) {
   const headers = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
-  if (state.token) headers['x-bolao-token'] = state.token;
+  // Header só carrega Latin-1; o servidor decodifica.
+  if (state.userName) headers['x-bolao-usuario'] = encodeURIComponent(state.userName);
 
   let res;
   try {
@@ -174,20 +178,48 @@ dom['gate-form'].addEventListener('submit', async (event) => {
     return;
   }
 
+  let user;
   try {
-    await whileBusy(dom['gate-submit'], async () => {
-      const data = await api('POST', '/api/users', { name });
-      state.token = data.token;
-      state.userName = data.user.name;
-      localStorage.setItem(TOKEN_KEY, data.token);
-    });
+    // Nome que já existe entra como esse usuário; nome novo é criado.
+    const data = await whileBusy(dom['gate-submit'], () => api('POST', '/api/users', { name }));
+    user = data.user;
   } catch (err) {
     showError(dom['gate-error'], err.message);
     return;
   }
 
+  rememberUser(user.name);
   await enterApp();
 });
+
+/** Guarda o nome como o servidor devolveu — quem digitou "ana" é a "Ana". */
+function rememberUser(name) {
+  state.userName = name;
+  localStorage.setItem(NAME_KEY, name);
+}
+
+/** Esquece o nome neste navegador e volta para o porteiro. */
+function forgetUser(message, prefill = '') {
+  localStorage.removeItem(NAME_KEY);
+  state.userName = null;
+  state.day = null;
+
+  // Nada do usuário anterior fica para trás, nem a senha de admin digitada.
+  dom['bet-time'].value = '';
+  dom['admin-password'].value = '';
+  clearError(dom['bet-error']);
+  clearError(dom['admin-error']);
+  setNote(dom['admin-ok'], '');
+
+  dom['app'].hidden = true;
+  dom['gate'].hidden = false;
+  dom['gate-name'].value = prefill;
+  if (message) showError(dom['gate-error'], message);
+  else clearError(dom['gate-error']);
+  dom['gate-name'].focus();
+}
+
+dom['logout'].addEventListener('click', () => forgetUser());
 
 // --- Navegação de dia -------------------------------------------------------
 
@@ -225,7 +257,7 @@ dom['bet-form'].addEventListener('submit', async (event) => {
       state.day = await api('POST', '/api/bets', { date: state.date, time });
     });
   } catch (err) {
-    if (err.code === 'SEM_USUARIO') return forgetUser();
+    if (err.code === 'SEM_USUARIO') return userVanished();
     showError(dom['bet-error'], err.message);
     // O servidor pode ter recusado por prazo: recarrega para refletir o estado real.
     await loadDay();
@@ -275,12 +307,17 @@ dom['admin-form'].addEventListener('submit', async (event) => {
 // --- Carregamento -----------------------------------------------------------
 
 async function loadDay() {
+  const asked = state.userName;
+  let day;
   try {
-    state.day = await api('GET', `/api/day?date=${encodeURIComponent(state.date)}`);
+    day = await api('GET', `/api/day?date=${encodeURIComponent(state.date)}`);
   } catch (err) {
     showError(dom['bet-error'], err.message);
     return;
   }
+  // Resposta que chegou depois de um "Sair": era de outra pessoa, descarta.
+  if (asked !== state.userName) return;
+  state.day = day;
   renderDayView();
 }
 
@@ -294,14 +331,10 @@ async function loadRanking() {
   renderRanking();
 }
 
-function forgetUser() {
-  localStorage.removeItem(TOKEN_KEY);
-  state.token = null;
-  state.userName = null;
-  dom['app'].hidden = true;
-  dom['gate'].hidden = false;
-  dom['gate-name'].value = '';
-  showError(dom['gate-error'], 'Sua sessão expirou. Entre com seu nome de novo.');
+/** O nome lembrado não existe mais no servidor (banco recriado, por exemplo). */
+function userVanished() {
+  const name = state.userName ?? '';
+  forgetUser(`Não encontramos "${name}" no bolão. Entre de novo para continuar.`, name);
 }
 
 // --- Desenho: relógio -------------------------------------------------------
@@ -532,9 +565,27 @@ function renderDayView() {
 
 // --- Arranque ---------------------------------------------------------------
 
+let timersStarted = false;
+
+/** Relógio e atualização periódica: ligados uma vez, quietos sem usuário. */
+function startTimers() {
+  if (timersStarted) return;
+  timersStarted = true;
+
+  const refresh = () => {
+    if (!state.userName) return;
+    void loadDay();
+    void loadRanking();
+  };
+
+  setInterval(renderClock, 1000);
+  setInterval(refresh, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+}
+
 async function enterApp() {
-  dom['gate'].hidden = true;
-  dom['app'].hidden = false;
   dom['whoami-name'].textContent = state.userName;
 
   state.date = state.date ?? state.today;
@@ -544,24 +595,19 @@ async function enterApp() {
   dom['admin-date'].value = state.today;
   dom['admin-date'].max = state.today;
 
+  // Carrega antes de mostrar: depois de um "Sair", a tela ainda tem o dia
+  // de quem saiu.
   await Promise.all([loadDay(), loadRanking()]);
 
-  setInterval(renderClock, 1000);
-  setInterval(() => {
-    void loadDay();
-    void loadRanking();
-  }, REFRESH_MS);
-
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      void loadDay();
-      void loadRanking();
-    }
-  });
+  dom['gate'].hidden = true;
+  dom['app'].hidden = false;
+  clearError(dom['gate-error']);
+  startTimers();
 }
 
 async function boot() {
-  state.token = localStorage.getItem(TOKEN_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
+  state.userName = localStorage.getItem(NAME_KEY);
 
   let session;
   try {
@@ -576,15 +622,14 @@ async function boot() {
   dom['foot-close'].textContent = session.betCloseTime;
 
   if (!session.user) {
-    // Token velho ou inexistente: volta para a escolha de nome.
-    if (state.token) localStorage.removeItem(TOKEN_KEY);
-    state.token = null;
+    // Primeiro acesso neste navegador, ou um nome lembrado que sumiu do banco.
+    if (state.userName) return userVanished();
     dom['gate'].hidden = false;
     dom['gate-name'].focus();
     return;
   }
 
-  state.userName = session.user.name;
+  rememberUser(session.user.name);
   await enterApp();
 }
 

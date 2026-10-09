@@ -2,6 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { createClient } = require('@libsql/client');
 
 const { createStore } = require('../src/db.js');
 const { createApp } = require('../src/app.js');
@@ -16,8 +21,8 @@ const ONTEM = '2026-10-06';
  * Sobe uma instância do app com banco em memória e relógio controlado.
  * O relógio é o do "servidor" — é ele que decide todos os prazos.
  */
-async function startApp({ password = ADMIN_PASSWORD } = {}) {
-  const store = createStore({ url: ':memory:' });
+async function startApp({ password = ADMIN_PASSWORD, url = ':memory:' } = {}) {
+  const store = createStore({ url });
   const clock = { current: new Date(saoPauloEpochMs(HOJE, timeToMinutes('07:00'))) };
   const app = createApp({ store, adminPassword: password, clock: () => clock.current });
 
@@ -26,10 +31,11 @@ async function startApp({ password = ADMIN_PASSWORD } = {}) {
   });
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  const call = async (method, pathname, { body, token } = {}) => {
-    const headers = {};
+  /** `user` é o nome, mandado do jeito que o navegador manda. */
+  const call = async (method, pathname, { body, user, headers: extra } = {}) => {
+    const headers = { ...extra };
     if (body !== undefined) headers['content-type'] = 'application/json';
-    if (token) headers['x-bolao-token'] = token;
+    if (user) headers['x-bolao-usuario'] = encodeURIComponent(user);
     const res = await fetch(base + pathname, {
       method,
       headers,
@@ -45,10 +51,11 @@ async function startApp({ password = ADMIN_PASSWORD } = {}) {
     setNow(date, time) {
       clock.current = new Date(saoPauloEpochMs(date, timeToMinutes(time)));
     },
+    /** Cria o usuário e devolve o nome com que ele passa a ser identificado. */
     async join(name) {
       const res = await call('POST', '/api/users', { body: { name } });
       assert.equal(res.status, 201, `falhou ao criar ${name}: ${JSON.stringify(res.body)}`);
-      return res.body.token;
+      return res.body.user.name;
     },
     async close() {
       await new Promise((resolve) => server.close(resolve));
@@ -73,24 +80,86 @@ function withApp(name, fn, options) {
 // Usuário
 // ---------------------------------------------------------------------------
 
-withApp('entrar com um nome devolve um token', async (app) => {
+withApp('nome novo cria o usuário', async (app) => {
   const res = await app.call('POST', '/api/users', { body: { name: 'Ana' } });
   assert.equal(res.status, 201);
-  assert.equal(res.body.user.name, 'Ana');
-  assert.ok(res.body.token.length > 20, 'token precisa ser longo');
+  assert.equal(res.body.created, true);
+  assert.deepEqual(res.body.user, { name: 'Ana' });
+  assert.equal(res.body.token, undefined, 'não existe mais token');
 
-  const session = await app.call('GET', '/api/session', { token: res.body.token });
+  const session = await app.call('GET', '/api/session', { user: 'Ana' });
   assert.equal(session.body.user.name, 'Ana');
   assert.equal(session.body.today, HOJE, 'o servidor informa o dia dele, não o do navegador');
 });
 
-withApp('nome é único ignorando maiúsculas e minúsculas', async (app) => {
+withApp('nome existente entra como o mesmo usuário, sem caixa e sem espaço nas pontas', async (app) => {
   await app.join('Ana');
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: 'Ana' });
+
   for (const tentativa of ['Ana', 'ana', 'ANA', '  AnA  ']) {
-    const res = await app.call('POST', '/api/users', { body: { name: tentativa } });
-    assert.equal(res.status, 409, `deveria recusar "${tentativa}"`);
-    assert.equal(res.body.error.code, 'NOME_EM_USO');
+    const entrada = await app.call('POST', '/api/users', { body: { name: tentativa } });
+    assert.equal(entrada.status, 200, `"${tentativa}" deveria entrar, não criar`);
+    assert.equal(entrada.body.created, false);
+    assert.equal(entrada.body.user.name, 'Ana', 'devolve o nome como foi gravado');
+
+    // O header também é comparado sem caixa e sem espaço nas pontas.
+    const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: tentativa });
+    assert.equal(dia.body.myBet, '08:45', `"${tentativa}" deveria ver a aposta da Ana`);
   }
+
+  const { body } = await app.call('GET', '/api/ranking');
+  assert.equal(body.ranking.length, 1, 'continua existindo uma Ana só');
+});
+
+withApp('o mesmo nome em outro computador continua com uma aposta por dia', async (app) => {
+  // Computador do trabalho.
+  await app.call('POST', '/api/users', { body: { name: 'Ana' } });
+  const primeira = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: 'Ana' });
+  assert.equal(primeira.status, 201);
+
+  // Celular: não tem nada guardado, só digita o nome.
+  const entrada = await app.call('POST', '/api/users', { body: { name: 'ana' } });
+  assert.equal(entrada.status, 200);
+  const nome = entrada.body.user.name;
+
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: nome });
+  assert.equal(dia.body.myBet, '08:45');
+
+  const segunda = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:30' }, user: nome });
+  assert.equal(segunda.status, 409);
+  assert.equal(segunda.body.error.code, 'JA_APOSTOU');
+});
+
+withApp('duas entradas simultâneas com o mesmo nome novo criam um usuário só', async (app) => {
+  const respostas = await Promise.all([
+    app.call('POST', '/api/users', { body: { name: 'Ana' } }),
+    app.call('POST', '/api/users', { body: { name: 'ana' } }),
+  ]);
+  assert.deepEqual(respostas.map((r) => r.status).sort(), [200, 201]);
+  assert.equal(
+    respostas[0].body.user.name,
+    respostas[1].body.user.name,
+    'os dois entram no mesmo usuário',
+  );
+
+  const { body } = await app.call('GET', '/api/ranking');
+  assert.equal(body.ranking.length, 1);
+});
+
+withApp('nomes com acento identificam o usuário', async (app) => {
+  await app.join('Fábio');
+
+  const aposta = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: 'fábio' });
+  assert.equal(aposta.status, 201);
+
+  // "á" como "a" + acento combinante, do jeito que alguns teclados mandam.
+  const decomposto = 'Fábio';
+  const entrada = await app.call('POST', '/api/users', { body: { name: decomposto } });
+  assert.equal(entrada.status, 200);
+  assert.equal(entrada.body.user.name, 'Fábio');
+
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: decomposto });
+  assert.equal(dia.body.myBet, '08:45');
 });
 
 withApp('nomes malformados são recusados', async (app) => {
@@ -102,19 +171,108 @@ withApp('nomes malformados são recusados', async (app) => {
 });
 
 withApp('não existe endpoint para trocar o nome', async (app) => {
-  const token = await app.join('Ana');
+  const user = await app.join('Ana');
   for (const method of ['PUT', 'PATCH', 'DELETE']) {
-    const res = await app.call(method, '/api/users', { body: { name: 'Ana Maria' }, token });
+    const res = await app.call(method, '/api/users', { body: { name: 'Ana Maria' }, user });
     assert.equal(res.status, 404, `${method} /api/users não deveria existir`);
   }
-  const res = await app.call('PATCH', '/api/session', { body: { name: 'Ana Maria' }, token });
+  const res = await app.call('PATCH', '/api/session', { body: { name: 'Ana Maria' }, user });
   assert.equal(res.status, 404);
+
+  // Entrar com outro nome cria outro usuário; a Ana continua Ana.
+  await app.call('POST', '/api/users', { body: { name: 'Ana Maria' } });
+  const { body } = await app.call('GET', '/api/ranking');
+  assert.deepEqual(body.ranking.map((r) => r.name).sort(), ['Ana', 'Ana Maria']);
 });
 
-withApp('sem token não dá para apostar', async (app) => {
+withApp('sem nome não dá para apostar', async (app) => {
   const res = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' } });
   assert.equal(res.status, 401);
   assert.equal(res.body.error.code, 'SEM_USUARIO');
+});
+
+withApp('nome que ninguém criou não aposta nem é criado pelo caminho', async (app) => {
+  const res = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: 'Zé' });
+  assert.equal(res.status, 401);
+  assert.equal(res.body.error.code, 'SEM_USUARIO');
+
+  const session = await app.call('GET', '/api/session', { user: 'Zé' });
+  assert.equal(session.body.user, null);
+
+  const { body } = await app.call('GET', '/api/ranking');
+  assert.deepEqual(body.ranking, [], 'só a tela de nome cria usuário');
+});
+
+withApp('token e header malformado não identificam ninguém', async (app) => {
+  await app.join('Ana');
+  for (const headers of [
+    { 'x-bolao-token': 'qualquer-coisa' },
+    { 'x-bolao-usuario': '%E0%A4%A' }, // escape % quebrado
+  ]) {
+    const res = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, headers });
+    assert.equal(res.status, 401, `deveria recusar ${JSON.stringify(headers)}`);
+    assert.equal(res.body.error.code, 'SEM_USUARIO');
+  }
+});
+
+test('usuários e apostas de um banco da versão com token continuam valendo', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bolao-'));
+  const url = pathToFileURL(path.join(dir, 'antigo.db')).href;
+
+  // Banco como a versão anterior deixava: cada usuário com seu token.
+  const antigo = createClient({ url });
+  await antigo.executeMultiple(`
+    CREATE TABLE users (
+      id          INTEGER PRIMARY KEY,
+      name        TEXT    NOT NULL,
+      name_lower  TEXT    NOT NULL UNIQUE,
+      token       TEXT    NOT NULL UNIQUE,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE bets (
+      id          INTEGER PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      bet_date    TEXT    NOT NULL,
+      bet_minutes INTEGER NOT NULL CHECK (bet_minutes BETWEEN 0 AND 1439),
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (user_id, bet_date)
+    );
+    CREATE TABLE results (
+      bet_date        TEXT    PRIMARY KEY,
+      arrival_minutes INTEGER NOT NULL CHECK (arrival_minutes BETWEEN 0 AND 1439),
+      updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO users (id, name, name_lower, token) VALUES (1, 'Ana', 'ana', 'tokenAntigoDaAna');
+    INSERT INTO bets (user_id, bet_date, bet_minutes) VALUES (1, '${HOJE}', 525);
+  `);
+  antigo.close();
+
+  const app = await startApp({ url });
+  try {
+    const entrada = await app.call('POST', '/api/users', { body: { name: 'ana' } });
+    assert.equal(entrada.status, 200, 'a Ana já existia');
+    assert.equal(entrada.body.user.name, 'Ana');
+
+    const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: 'Ana' });
+    assert.equal(dia.body.myBet, '08:45', 'a aposta antiga continua lá');
+
+    const repetida = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:00' }, user: 'Ana' });
+    assert.equal(repetida.status, 409);
+
+    // Gente nova entra no banco antigo sem tropeçar na coluna token.
+    assert.equal(await app.join('Bruno'), 'Bruno');
+    assert.equal(await app.join('Carla'), 'Carla');
+    const { body } = await app.call('GET', '/api/ranking');
+    assert.deepEqual(body.ranking.map((r) => r.name), ['Ana', 'Bruno', 'Carla']);
+  } finally {
+    await app.close();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // No Windows o libSQL só solta o arquivo quando o processo termina;
+      // fica para a limpeza do diretório temporário do sistema.
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -122,60 +280,60 @@ withApp('sem token não dá para apostar', async (app) => {
 // ---------------------------------------------------------------------------
 
 withApp('aposta no dia atual é aceita antes das 08:30', async (app) => {
-  const token = await app.join('Ana');
+  const user = await app.join('Ana');
   app.setNow(HOJE, '08:29');
-  const res = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, token });
+  const res = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user });
   assert.equal(res.status, 201);
   assert.equal(res.body.myBet, '08:45');
 });
 
 withApp('aposta no dia atual é bloqueada a partir das 08:30', async (app) => {
-  const token = await app.join('Ana');
+  const user = await app.join('Ana');
   app.setNow(HOJE, '08:30');
-  const res = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, token });
+  const res = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user });
   assert.equal(res.status, 403);
   assert.equal(res.body.error.code, 'PRAZO_ENCERRADO');
   assert.match(res.body.error.message, /08:30/);
 });
 
 withApp('aposta em data passada é bloqueada', async (app) => {
-  const token = await app.join('Ana');
-  const res = await app.call('POST', '/api/bets', { body: { date: ONTEM, time: '08:45' }, token });
+  const user = await app.join('Ana');
+  const res = await app.call('POST', '/api/bets', { body: { date: ONTEM, time: '08:45' }, user });
   assert.equal(res.status, 403);
   assert.equal(res.body.error.code, 'DATA_PASSADA');
 });
 
 withApp('aposta em data futura é aceita mesmo depois das 08:30', async (app) => {
-  const token = await app.join('Ana');
+  const user = await app.join('Ana');
   app.setNow(HOJE, '22:00');
-  const res = await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:15' }, token });
+  const res = await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:15' }, user });
   assert.equal(res.status, 201);
   assert.equal(res.body.myBet, '09:15');
 });
 
 withApp('a aposta é única por data e não pode ser trocada nem apagada', async (app) => {
-  const token = await app.join('Ana');
-  assert.equal((await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, token })).status, 201);
+  const user = await app.join('Ana');
+  assert.equal((await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user })).status, 201);
 
-  const repetida = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:00' }, token });
+  const repetida = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:00' }, user });
   assert.equal(repetida.status, 409);
   assert.equal(repetida.body.error.code, 'JA_APOSTOU');
 
   for (const method of ['PUT', 'PATCH', 'DELETE']) {
-    const res = await app.call(method, '/api/bets', { body: { date: HOJE, time: '09:00' }, token });
+    const res = await app.call(method, '/api/bets', { body: { date: HOJE, time: '09:00' }, user });
     assert.equal(res.status, 404, `${method} /api/bets não deveria existir`);
   }
 
   // Depois de tudo, a aposta original continua de pé.
-  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { token });
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user });
   assert.equal(dia.body.myBet, '08:45');
 });
 
 withApp('duas apostas simultâneas do mesmo usuário: só uma entra', async (app) => {
-  const token = await app.join('Ana');
+  const user = await app.join('Ana');
   const respostas = await Promise.all([
-    app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:40' }, token }),
-    app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:40' }, token }),
+    app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:40' }, user }),
+    app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:40' }, user }),
   ]);
   const criadas = respostas.filter((r) => r.status === 201);
   const recusadas = respostas.filter((r) => r.status === 409);
@@ -184,12 +342,12 @@ withApp('duas apostas simultâneas do mesmo usuário: só uma entra', async (app
 });
 
 withApp('horário e data malformados são recusados', async (app) => {
-  const token = await app.join('Ana');
-  const horarioRuim = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '25:00' }, token });
+  const user = await app.join('Ana');
+  const horarioRuim = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '25:00' }, user });
   assert.equal(horarioRuim.status, 400);
   assert.equal(horarioRuim.body.error.code, 'HORARIO_INVALIDO');
 
-  const dataRuim = await app.call('POST', '/api/bets', { body: { date: '07/10/2026', time: '08:45' }, token });
+  const dataRuim = await app.call('POST', '/api/bets', { body: { date: '07/10/2026', time: '08:45' }, user });
   assert.equal(dataRuim.status, 400);
   assert.equal(dataRuim.body.error.code, 'DATA_INVALIDA');
 });
@@ -201,18 +359,18 @@ withApp('horário e data malformados são recusados', async (app) => {
 withApp('apostas dos outros só aparecem depois das 08:30', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, token: ana });
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:10' }, token: bruno });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:10' }, user: bruno });
 
   app.setNow(HOJE, '08:29');
-  const antes = await app.call('GET', `/api/day?date=${HOJE}`, { token: ana });
+  const antes = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(antes.body.betsVisible, false);
   assert.deepEqual(antes.body.bets, [], 'nenhuma aposta alheia antes das 08:30');
   assert.equal(antes.body.totalBets, 2, 'a contagem aparece, os horários não');
   assert.equal(antes.body.myBet, '08:45', 'a própria aposta sempre aparece');
 
   app.setNow(HOJE, '08:30');
-  const depois = await app.call('GET', `/api/day?date=${HOJE}`, { token: ana });
+  const depois = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(depois.body.betsVisible, true);
   assert.deepEqual(
     depois.body.bets.map((b) => [b.name, b.time]),
@@ -223,10 +381,10 @@ withApp('apostas dos outros só aparecem depois das 08:30', async (app) => {
 withApp('apostas de um dia futuro ficam escondidas', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
-  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '08:45' }, token: ana });
-  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:10' }, token: bruno });
+  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '08:45' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:10' }, user: bruno });
 
-  const dia = await app.call('GET', `/api/day?date=${AMANHA}`, { token: ana });
+  const dia = await app.call('GET', `/api/day?date=${AMANHA}`, { user: ana });
   assert.equal(dia.body.betsVisible, false);
   assert.deepEqual(dia.body.bets, []);
   assert.equal(dia.body.totalBets, 2);
@@ -240,9 +398,9 @@ withApp('o exemplo do enunciado roda ponta a ponta', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
   const carla = await app.join('Carla');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:55' }, token: ana });
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, token: bruno });
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:10' }, token: carla });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:55' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, user: bruno });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:10' }, user: carla });
 
   app.setNow(HOJE, '09:00');
   const admin = await app.call('POST', '/api/admin/result', {
@@ -251,7 +409,7 @@ withApp('o exemplo do enunciado roda ponta a ponta', async (app) => {
   assert.equal(admin.status, 200);
   assert.deepEqual(admin.body.winners, ['Bruno']);
 
-  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { token: ana });
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(dia.body.arrivalTime, '08:56');
   assert.equal(dia.body.status, 'com_resultado');
   assert.deepEqual(dia.body.winners, ['Bruno']);
@@ -267,8 +425,8 @@ withApp('o exemplo do enunciado roda ponta a ponta', async (app) => {
 withApp('empate no horário vencedor premia os dois', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, token: ana });
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, token: bruno });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, user: bruno });
 
   app.setNow(HOJE, '09:00');
   const admin = await app.call('POST', '/api/admin/result', {
@@ -279,7 +437,7 @@ withApp('empate no horário vencedor premia os dois', async (app) => {
 
 withApp('todas as apostas antes da chegada: dia sem vencedor', async (app) => {
   const ana = await app.join('Ana');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:40' }, token: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:40' }, user: ana });
 
   app.setNow(HOJE, '09:30');
   const admin = await app.call('POST', '/api/admin/result', {
@@ -287,7 +445,7 @@ withApp('todas as apostas antes da chegada: dia sem vencedor', async (app) => {
   });
   assert.deepEqual(admin.body.winners, []);
 
-  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { token: ana });
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(dia.body.status, 'com_resultado');
   assert.deepEqual(dia.body.winners, []);
   assert.equal(dia.body.bets[0].isEliminated, true);
@@ -295,15 +453,15 @@ withApp('todas as apostas antes da chegada: dia sem vencedor', async (app) => {
 
 withApp('meio-dia sem chegada registrada: dia sem vencedor', async (app) => {
   const ana = await app.join('Ana');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, token: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: ana });
 
   app.setNow(HOJE, '11:59');
-  const antes = await app.call('GET', `/api/day?date=${HOJE}`, { token: ana });
+  const antes = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(antes.body.status, 'aguardando_chegada');
   assert.equal(antes.body.settled, false);
 
   app.setNow(HOJE, '12:00');
-  const depois = await app.call('GET', `/api/day?date=${HOJE}`, { token: ana });
+  const depois = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(depois.body.status, 'sem_resultado');
   assert.equal(depois.body.settled, true);
   assert.deepEqual(depois.body.winners, []);
@@ -312,7 +470,7 @@ withApp('meio-dia sem chegada registrada: dia sem vencedor', async (app) => {
 withApp('chegada registrada antes das 08:30 não vaza o resultado', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:10' }, token: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:10' }, user: ana });
 
   app.setNow(HOJE, '08:15');
   const admin = await app.call('POST', '/api/admin/result', {
@@ -321,13 +479,13 @@ withApp('chegada registrada antes das 08:30 não vaza o resultado', async (app) 
   assert.equal(admin.status, 200);
 
   // Bruno ainda pode apostar — e não pode descobrir que já deu 08:05.
-  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { token: bruno });
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: bruno });
   assert.equal(dia.body.arrivalTime, null, 'a chegada fica escondida até as 08:30');
   assert.deepEqual(dia.body.winners, []);
   assert.equal(dia.body.status, 'apostas_abertas');
 
   app.setNow(HOJE, '08:30');
-  const revelado = await app.call('GET', `/api/day?date=${HOJE}`, { token: bruno });
+  const revelado = await app.call('GET', `/api/day?date=${HOJE}`, { user: bruno });
   assert.equal(revelado.body.arrivalTime, '08:05');
   assert.deepEqual(revelado.body.winners, ['Ana']);
 });
@@ -366,8 +524,8 @@ withApp('admin não registra chegada de dia futuro', async (app) => {
 withApp('admin pode corrigir uma chegada já registrada', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:50' }, token: ana });
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:10' }, token: bruno });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:50' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '09:10' }, user: bruno });
 
   app.setNow(HOJE, '09:30');
   const primeiro = await app.call('POST', '/api/admin/result', {
@@ -380,7 +538,7 @@ withApp('admin pode corrigir uma chegada já registrada', async (app) => {
   });
   assert.deepEqual(corrigido.body.winners, ['Ana']);
 
-  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { token: ana });
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(dia.body.arrivalTime, '08:45');
 });
 
@@ -394,16 +552,16 @@ withApp('ranking ordena por vitórias e mostra o total de apostas', async (app) 
   await app.join('Carla'); // entrou e nunca apostou
 
   // Dia 1: chegou 08:56 -> Bruno (08:57) ganha.
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:55' }, token: ana });
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, token: bruno });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:55' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, user: bruno });
   app.setNow(HOJE, '09:00');
   await app.call('POST', '/api/admin/result', {
     body: { password: ADMIN_PASSWORD, date: HOJE, time: '08:56' },
   });
 
   // Dia 2: chegou 09:00 -> Bruno (09:00) ganha de novo.
-  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:30' }, token: ana });
-  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:00' }, token: bruno });
+  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:30' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:00' }, user: bruno });
   app.setNow(AMANHA, '09:05');
   await app.call('POST', '/api/admin/result', {
     body: { password: ADMIN_PASSWORD, date: AMANHA, time: '09:00' },
@@ -419,7 +577,7 @@ withApp('ranking ordena por vitórias e mostra o total de apostas', async (app) 
 
 withApp('ranking não conta vitória de dia ainda não revelado', async (app) => {
   const ana = await app.join('Ana');
-  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, token: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: ana });
 
   app.setNow(HOJE, '08:10');
   await app.call('POST', '/api/admin/result', {

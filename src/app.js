@@ -24,15 +24,33 @@ const {
 } = require('./rules.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-const TOKEN_HEADER = 'x-bolao-token';
+/**
+ * Quem está pedindo: o nome, passado por encodeURIComponent. Header HTTP só
+ * carrega Latin-1, e nome pode ter qualquer letra.
+ */
+const USER_HEADER = 'x-bolao-usuario';
 
 /** 2 a 20 caracteres, começando por letra ou número. */
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{1,19}$/u;
 
+/**
+ * Forma canônica de um nome digitado, ou null se não servir. NFC faz "Fábio"
+ * digitado em teclados diferentes virar a mesma sequência de bytes.
+ */
 function normalizeName(raw) {
   if (typeof raw !== 'string') return null;
-  const name = raw.trim().replace(/\s+/g, ' ');
+  const name = raw.normalize('NFC').trim().replace(/\s+/g, ' ');
   return NAME_RE.test(name) ? name : null;
+}
+
+function nameFromHeader(req) {
+  const raw = req.get(USER_HEADER);
+  if (!raw) return null;
+  try {
+    return normalizeName(decodeURIComponent(raw));
+  } catch {
+    return null; // Sequência % malformada.
+  }
 }
 
 function fail(res, status, code, message) {
@@ -63,8 +81,14 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
   /** O "agora" oficial: sempre o relógio do servidor, em America/Sao_Paulo. */
   const serverNow = () => nowInSaoPaulo(clock());
 
+  /** Usuário identificado pelo nome no header — sem caixa, sem espaço nas pontas. */
+  async function currentUser(req) {
+    const name = nameFromHeader(req);
+    return name ? store.findUserByName(name) : null;
+  }
+
   async function requireUser(req, res) {
-    const user = await store.findUserByToken(req.get(TOKEN_HEADER));
+    const user = await currentUser(req);
     if (!user) {
       fail(res, 401, 'SEM_USUARIO', 'Não encontramos seu usuário. Escolha um nome para entrar.');
       return null;
@@ -122,7 +146,7 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
 
   app.get('/api/session', async (req, res) => {
     const now = serverNow();
-    const user = await store.findUserByToken(req.get(TOKEN_HEADER));
+    const user = await currentUser(req);
     res.json({
       user: user ? { name: user.name } : null,
       today: now.date,
@@ -133,6 +157,11 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
     });
   });
 
+  /**
+   * Entra no bolão pelo nome: se já existe, entra como esse usuário; se não,
+   * cria. Devolve o nome como está gravado — quem digitar "ana" entra como
+   * "Ana" —, e é ele que o navegador passa a mandar.
+   */
   app.post('/api/users', async (req, res) => {
     const name = normalizeName(req.body?.name);
     if (!name) {
@@ -143,16 +172,21 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
         'Use de 2 a 20 caracteres, começando por letra ou número. Valem letras, números, espaço, ponto, hífen e sublinhado.',
       );
     }
-    if (await store.findUserByName(name)) {
-      return fail(res, 409, 'NOME_EM_USO', `O nome "${name}" já está em uso. Escolha outro.`);
+
+    const existing = await store.findUserByName(name);
+    if (existing) {
+      return res.json({ created: false, user: { name: existing.name } });
     }
 
-    const token = crypto.randomBytes(24).toString('base64url');
-    const user = await store.createUser(name, token);
-    if (!user) {
-      return fail(res, 409, 'NOME_EM_USO', `O nome "${name}" já está em uso. Escolha outro.`);
+    const created = await store.createUser(name);
+    if (created) {
+      return res.status(201).json({ created: true, user: { name: created.name } });
     }
-    res.status(201).json({ token, user: { name: user.name } });
+
+    // Outra requisição criou o mesmo nome entre a busca e o INSERT: o schema
+    // barrou a duplicata, e quem chegou depois entra no usuário que ficou.
+    const winner = await store.findUserByName(name);
+    res.json({ created: false, user: { name: winner.name } });
   });
 
   // --- Apostas ------------------------------------------------------------
@@ -163,7 +197,7 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
     if (!isValidDate(date)) {
       return fail(res, 400, 'DATA_INVALIDA', 'Data inválida. Use o formato AAAA-MM-DD.');
     }
-    const user = await store.findUserByToken(req.get(TOKEN_HEADER));
+    const user = await currentUser(req);
     res.json(await describeDay(date, user, now));
   });
 

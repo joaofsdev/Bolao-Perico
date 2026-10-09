@@ -14,7 +14,7 @@
 </head>
 <body>
 
-<!-- Porteiro: primeiro acesso escolhe o nome e nunca mais mexe nele. -->
+<!-- Porteiro: o nome é a identificação. Nome conhecido entra, nome novo cria. -->
 <div class="gate" id="gate" hidden>
   <div class="gate__card">
     <p class="plate">
@@ -31,7 +31,8 @@
                placeholder="Como a galera te chama" required>
       </label>
       <p class="hint">
-        Esse nome fica com você. Não tem como trocar depois, então escolha com carinho.
+        Já apostou antes? Digite o mesmo nome, de qualquer computador, e você volta para
+        as suas apostas. Nome novo cria um apostador novo — e não tem como trocar depois.
       </p>
       <p class="alert" id="gate-error" role="alert" hidden></p>
       <button class="btn btn--primary" id="gate-submit" type="submit">Entrar no bolão</button>
@@ -46,10 +47,13 @@
       <span class="plate__small">bolão do</span>
       <span class="plate__big">Perico</span>
     </p>
-    <p class="whoami">
-      <span class="label">você</span>
-      <span class="whoami__name" id="whoami-name">—</span>
-    </p>
+    <div class="whoami">
+      <p class="whoami__who">
+        <span class="label">você</span>
+        <span class="whoami__name" id="whoami-name">—</span>
+      </p>
+      <button class="whoami__logout" id="logout" type="button">Sair</button>
+    </div>
   </header>
 
   <main class="stack">

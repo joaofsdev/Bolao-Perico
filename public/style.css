@@ -215,7 +215,30 @@ body {
   border-bottom: 2px solid var(--ink);
 }
 
-.whoami { margin: 0; text-align: right; }
+.whoami {
+  display: flex;
+  align-items: flex-end;
+  gap: .75rem;
+  min-width: 0;
+}
+
+.whoami__who { margin: 0; min-width: 0; text-align: right; }
+
+.whoami__logout {
+  flex: none;
+  padding: .3rem .6rem;
+  border: 1px solid var(--rule-firm);
+  border-radius: var(--r-ctrl);
+  background: transparent;
+  color: var(--ink-soft);
+  font: 600 .72rem/1.2 var(--sans);
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.whoami__logout:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
 
 .whoami__name {
   display: block;
