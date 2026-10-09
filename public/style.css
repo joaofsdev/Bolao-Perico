@@ -582,7 +582,8 @@ body {
   white-space: nowrap;
 }
 
-.ranking__wins { color: var(--stamp); }
+.ranking__points { color: var(--stamp); }
+.ranking__wins { color: var(--ink); font-weight: 500; }
 .ranking__dot { color: var(--rule-firm); padding: 0 .15rem; }
 .ranking__bets { color: var(--ink-soft); }
 

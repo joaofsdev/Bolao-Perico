@@ -57,7 +57,7 @@ async function main() {
   }
 
   console.log(`${nomes.length} apostadores, dias: ${dias.map((d) => d.date).join(', ')}`);
-  console.log('Fábio entrou e nunca apostou — serve para ver o fim do ranking.');
+  console.log('Fábio entrou e nunca apostou — por isso não aparece no ranking.');
   store.close();
 }
 

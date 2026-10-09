@@ -46,6 +46,21 @@ Empate no horário vencedor: todos ganham. Se todas as apostas forem anteriores 
 chegada, o dia fica sem vencedor. O bolão do dia encerra ao meio-dia — se até lá não
 houver chegada registrada, o dia também fica sem vencedor.
 
+**Os pontos.** Quem ganha o dia pontua:
+
+| Como ganhou | Pontos | Na lista do dia |
+| --- | --- | --- |
+| Apostou exatamente o horário da chegada | 2 | NA MOSCA +2 |
+| Aposta posterior mais próxima da chegada | 1 | GANHOU +1 |
+
+Empate no horário vencedor: cada empatado leva a pontuação cheia, sem dividir.
+
+**O ranking.** Ordenado por pontos; empate em pontos vai para quem tem mais vitórias e,
+persistindo, para quem fez **menos** apostas. Só entra quem já fez ao menos uma aposta
+— quem só escolheu o nome e nunca apostou fica de fora. Os pontos saem das apostas e
+das chegadas registradas a cada consulta, então os dias que já passaram aparecem
+pontuados sem nenhuma migração.
+
 **O resultado.** O horário de chegada é registrado na área de admin, protegida pela
 senha em `ADMIN_PASSWORD`. O admin pode corrigir um horário já registrado (erro de
 digitação acontece) e não pode registrar a chegada de um dia que ainda não aconteceu.
@@ -109,11 +124,13 @@ npm run seed -- --force  # apaga o que tem e popula de novo
 npm test
 ```
 
-São 59 testes em dois arquivos, rodando no runner nativo do Node — sem framework.
+São 73 testes em dois arquivos, rodando no runner nativo do Node — sem framework.
 
 `test/rules.test.js` cobre a lógica pura: o exemplo do enunciado, aposta exatamente no
 horário de chegada, empates, dia em que todas as apostas vieram antes da chegada, dia
-sem apostas, independência da ordem da lista, conversões de horário, datas de calendário
+sem apostas, independência da ordem da lista, a pontuação (acerto exato vale 2, vitória
+por proximidade vale 1, empatados levam a pontuação cheia), a ordem do ranking com seus
+desempates, conversões de horário, datas de calendário
 e a conversão para o fuso de São Paulo (incluindo o caso em que 02:00 UTC ainda é o dia
 anterior em São Paulo).
 
@@ -161,7 +178,7 @@ Quem pede se identifica pelo header `x-bolao-usuario`, com o nome passado por
 criado pelo caminho: só `POST /api/users` cria usuário.
 | `GET` | `/api/day?date=AAAA-MM-DD` | O retrato do dia: sua aposta, as dos outros (se já liberadas), chegada e vencedor. |
 | `POST` | `/api/bets` | Registra sua aposta do dia. |
-| `GET` | `/api/ranking` | Vitórias e total de apostas por pessoa. |
+| `GET` | `/api/ranking` | Pontos, vitórias e total de apostas por pessoa, já ordenado. |
 | `POST` | `/api/admin/result` | Registra a chegada do Perico (exige a senha). |
 
 Erros vêm como `{ "error": { "code": "...", "message": "..." } }`, com a mensagem já

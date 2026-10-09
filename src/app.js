@@ -8,6 +8,7 @@ const {
   TIMEZONE,
   BET_CLOSE_MINUTES,
   SETTLE_MINUTES,
+  POINTS_EXACT,
   nowInSaoPaulo,
   saoPauloEpochMs,
   isValidDate,
@@ -18,7 +19,7 @@ const {
   betsAreVisible,
   isDaySettled,
   checkResultWindow,
-  findWinners,
+  scoreDay,
   dayStatus,
   computeRanking,
 } = require('./rules.js');
@@ -111,7 +112,7 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
 
     // Antes das 08:30 nada do dia é revelado — nem a chegada, nem o vencedor.
     const revealedArrival = visible ? arrivalMinutes : null;
-    const winners = findWinners(dayBets, revealedArrival);
+    const { winners, points } = scoreDay(dayBets, revealedArrival);
     const winnerIds = new Set(winners.map((bet) => bet.userId));
 
     return {
@@ -134,11 +135,15 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
         time: bet.time,
         isMine: Boolean(user) && bet.userId === user.id,
         isWinner: winnerIds.has(bet.userId),
+        points: winnerIds.has(bet.userId) ? points : 0,
         // O tempo não volta para trás: quem apostou antes da chegada saiu.
         isEliminated: revealedArrival !== null && bet.minutes < revealedArrival,
       })),
       arrivalTime: revealedArrival === null ? null : minutesToTime(revealedArrival),
       winners: winners.map((bet) => bet.name),
+      // Quanto cada vencedor leva: 2 no acerto exato, 1 por proximidade, 0 sem vencedor.
+      winnerPoints: points,
+      exactHit: points === POINTS_EXACT,
     };
   }
 
@@ -318,12 +323,14 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
     await store.setArrival(date, time);
 
     const dayBets = await store.getBetsOnDate(date);
-    const winners = findWinners(dayBets, timeToMinutes(time));
+    const { winners, points } = scoreDay(dayBets, timeToMinutes(time));
     res.json({
       date,
       arrivalTime: time,
       totalBets: dayBets.length,
       winners: winners.map((bet) => bet.name),
+      winnerPoints: points,
+      exactHit: points === POINTS_EXACT,
     });
   });
 

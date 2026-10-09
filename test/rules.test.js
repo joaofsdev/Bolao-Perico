@@ -18,7 +18,11 @@ const {
   isDaySettled,
   checkResultWindow,
   findWinners,
+  scoreDay,
+  POINTS_EXACT,
+  POINTS_CLOSEST,
   dayStatus,
+  computeRanking,
 } = require('../src/rules.js');
 
 /** Atalho: "agora" em São Paulo, montado à mão para os testes. */
@@ -232,6 +236,162 @@ test('a ordem das apostas na lista não muda o vencedor', () => {
 test('chegada pontual às 08:00 premia a aposta mais cedo a partir dali', () => {
   const dia = bets(['Ana', '07:55'], ['Bruno', '08:00'], ['Carla', '08:01']);
   assert.deepEqual(names(findWinners(dia, timeToMinutes('08:00'))), ['Bruno']);
+});
+
+// ---------------------------------------------------------------------------
+// Pontuação do dia
+// ---------------------------------------------------------------------------
+
+test('a pontuação vale 2 no acerto exato e 1 por proximidade', () => {
+  assert.equal(POINTS_EXACT, 2);
+  assert.equal(POINTS_CLOSEST, 1);
+});
+
+test('acerto exato: quem apostou o horário da chegada leva 2 pontos', () => {
+  const dia = bets(['Ana', '08:56'], ['Bruno', '08:57'], ['Carla', '08:50']);
+  const { winners, points } = scoreDay(dia, timeToMinutes('08:56'));
+  assert.deepEqual(names(winners), ['Ana']);
+  assert.equal(points, 2);
+});
+
+test('vitória por proximidade: a aposta posterior mais próxima leva 1 ponto', () => {
+  // O exemplo do enunciado: chegou 08:56, 08:57 ganha por um minuto.
+  const dia = bets(['Ana', '08:55'], ['Bruno', '08:57'], ['Carla', '09:10']);
+  const { winners, points } = scoreDay(dia, timeToMinutes('08:56'));
+  assert.deepEqual(names(winners), ['Bruno']);
+  assert.equal(points, 1);
+});
+
+test('vitória por proximidade vale 1 mesmo longe da chegada', () => {
+  const dia = bets(['Ana', '08:55'], ['Bruno', '10:30']);
+  const { winners, points } = scoreDay(dia, timeToMinutes('08:56'));
+  assert.deepEqual(names(winners), ['Bruno']);
+  assert.equal(points, 1);
+});
+
+test('empate no acerto exato: todos os empatados levam os 2 pontos', () => {
+  const dia = bets(['Ana', '08:56'], ['Bruno', '08:56'], ['Carla', '08:57']);
+  const { winners, points } = scoreDay(dia, timeToMinutes('08:56'));
+  assert.deepEqual(names(winners), ['Ana', 'Bruno']);
+  assert.equal(points, 2, 'pontuação cheia, sem dividir');
+});
+
+test('empate por proximidade: todos os empatados levam 1 ponto', () => {
+  const dia = bets(['Ana', '08:57'], ['Bruno', '08:57'], ['Carla', '08:58'], ['Diego', '08:50']);
+  const { winners, points } = scoreDay(dia, timeToMinutes('08:56'));
+  assert.deepEqual(names(winners), ['Ana', 'Bruno']);
+  assert.equal(points, 1);
+});
+
+test('acerto exato vence a aposta logo depois, que não pontua', () => {
+  const dia = bets(['Ana', '08:00'], ['Bruno', '08:01']);
+  const { winners, points } = scoreDay(dia, timeToMinutes('08:00'));
+  assert.deepEqual(names(winners), ['Ana']);
+  assert.equal(points, 2);
+});
+
+test('dia sem vencedor não dá ponto a ninguém', () => {
+  const antes = bets(['Ana', '08:30'], ['Bruno', '08:55']);
+  assert.deepEqual(scoreDay(antes, timeToMinutes('09:00')), { winners: [], points: 0 });
+  assert.deepEqual(scoreDay(antes, null), { winners: [], points: 0 }, 'sem chegada registrada');
+  assert.deepEqual(scoreDay([], timeToMinutes('09:00')), { winners: [], points: 0 }, 'sem apostas');
+});
+
+// ---------------------------------------------------------------------------
+// Ranking
+// ---------------------------------------------------------------------------
+
+const USERS = [
+  { id: 1, name: 'Ana' },
+  { id: 2, name: 'Bruno' },
+  { id: 3, name: 'Carla' },
+  { id: 4, name: 'Diego' },
+];
+
+/** Atalho: apostas do ranking a partir de [userId, data, "HH:MM"]. */
+const rankBets = (...rows) =>
+  rows.map(([userId, date, time]) => ({ userId, date, minutes: timeToMinutes(time) }));
+
+/** Atalho: chegadas a partir de [data, "HH:MM"]. */
+const arrivals = (...rows) => rows.map(([date, time]) => ({ date, minutes: timeToMinutes(time) }));
+
+test('ranking soma os pontos de dias passados e de hoje, já revelados', () => {
+  const ranking = computeRanking(
+    USERS.slice(0, 3),
+    rankBets(
+      [1, '2026-10-05', '09:00'], [2, '2026-10-05', '09:05'], // chegou 09:00: Ana na mosca (+2)
+      [1, '2026-10-06', '08:50'], [2, '2026-10-06', '08:45'], // chegou 08:46: Ana por proximidade (+1)
+      [2, '2026-10-07', '08:41'], [3, '2026-10-07', '08:41'], // chegou 08:41: Bruno e Carla na mosca (+2 cada)
+    ),
+    arrivals(['2026-10-05', '09:00'], ['2026-10-06', '08:46'], ['2026-10-07', '08:41']),
+    at('2026-10-07', '09:00'),
+  );
+  assert.deepEqual(ranking, [
+    { name: 'Ana', points: 3, wins: 2, totalBets: 2 },
+    { name: 'Carla', points: 2, wins: 1, totalBets: 1 }, // empata com Bruno, apostou menos
+    { name: 'Bruno', points: 2, wins: 1, totalBets: 3 },
+  ]);
+});
+
+test('ranking ordena por pontos, depois vitórias, depois menos apostas', () => {
+  const ranking = computeRanking(
+    USERS,
+    rankBets(
+      // Ana: um acerto exato = 2 pontos, 1 vitória.
+      [1, '2026-10-01', '09:00'],
+      // Bruno: duas vitórias por proximidade = 2 pontos, 2 vitórias.
+      [2, '2026-10-02', '09:10'], [2, '2026-10-03', '09:10'],
+      // Carla e Diego: um ponto cada; Carla apostou menos vezes.
+      [3, '2026-10-04', '09:10'],
+      [4, '2026-10-05', '09:10'], [4, '2026-10-06', '08:00'],
+    ),
+    arrivals(
+      ['2026-10-01', '09:00'], ['2026-10-02', '09:05'], ['2026-10-03', '09:05'],
+      ['2026-10-04', '09:05'], ['2026-10-05', '09:05'], ['2026-10-06', '09:05'],
+    ),
+    at('2026-10-07', '09:00'),
+  );
+  assert.deepEqual(
+    ranking.map((r) => [r.name, r.points, r.wins, r.totalBets]),
+    [
+      ['Bruno', 2, 2, 2], // empata em pontos com Ana e passa por ter mais vitórias
+      ['Ana', 2, 1, 1],
+      ['Carla', 1, 1, 1], // empata com Diego em pontos e vitórias, apostou menos
+      ['Diego', 1, 1, 2],
+    ],
+  );
+});
+
+test('quem nunca apostou não entra no ranking', () => {
+  const ranking = computeRanking(
+    USERS, // Ana, Bruno, Carla e Diego estão cadastrados
+    rankBets(
+      [1, '2026-10-06', '08:50'], // Ana perdeu
+      [2, '2026-10-06', '09:10'], // Bruno ganhou
+      [3, '2026-10-08', '09:00'], // Carla só apostou num dia que ainda não chegou
+    ),
+    arrivals(['2026-10-06', '09:00']),
+    at('2026-10-07', '09:00'),
+  );
+  assert.deepEqual(ranking, [
+    { name: 'Bruno', points: 1, wins: 1, totalBets: 1 },
+    { name: 'Ana', points: 0, wins: 0, totalBets: 1 },
+    { name: 'Carla', points: 0, wins: 0, totalBets: 1 },
+  ]);
+  assert.ok(!ranking.some((r) => r.name === 'Diego'), 'Diego nunca apostou');
+});
+
+test('ranking vazio enquanto ninguém apostou', () => {
+  assert.deepEqual(computeRanking(USERS, [], [], at('2026-10-07', '09:00')), []);
+});
+
+test('ranking não pontua dia de hoje antes das 08:30', () => {
+  const dia = rankBets([1, '2026-10-07', '08:05']);
+  const chegada = arrivals(['2026-10-07', '08:05']);
+  const cedo = computeRanking(USERS.slice(0, 1), dia, chegada, at('2026-10-07', '08:10'));
+  assert.deepEqual(cedo, [{ name: 'Ana', points: 0, wins: 0, totalBets: 1 }]);
+  const revelado = computeRanking(USERS.slice(0, 1), dia, chegada, at('2026-10-07', '08:30'));
+  assert.deepEqual(revelado, [{ name: 'Ana', points: 2, wins: 1, totalBets: 1 }]);
 });
 
 // ---------------------------------------------------------------------------

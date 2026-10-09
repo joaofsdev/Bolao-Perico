@@ -117,6 +117,19 @@ const shortDate = (isoDate) => isoDate.split('-').reverse().slice(0, 2).join('/'
 
 const listFmt = new Intl.ListFormat('pt-BR', { style: 'long', type: 'conjunction' });
 
+/** "+1 ponto", "+2 pontos". */
+const pointsLabel = (points) => `+${points} ${points === 1 ? 'ponto' : 'pontos'}`;
+
+/**
+ * Resumo do vencedor com os pontos, como o servidor calculou:
+ * "Ganhou: Silva. +1 ponto." / "Na mosca: Ana e Bruno. +2 pontos para cada."
+ */
+function winnersSummary({ winners, winnerPoints, exactHit }) {
+  const head = exactHit ? 'Na mosca' : winners.length === 1 ? 'Ganhou' : 'Ganharam';
+  const each = winners.length > 1 ? ' para cada' : '';
+  return `${head}: ${listFmt.format(winners)}. ${pointsLabel(winnerPoints)}${each}.`;
+}
+
 /** Nome do dia relativo a hoje: "hoje", "amanhã", "ontem" ou a data. */
 function dayWord(isoDate) {
   if (!state.today) return formatDate(isoDate);
@@ -296,7 +309,7 @@ dom['admin-form'].addEventListener('submit', async (event) => {
   }
 
   const quem = result.winners.length
-    ? `${result.winners.length === 1 ? 'Vencedor' : 'Vencedores'}: ${listFmt.format(result.winners)}.`
+    ? winnersSummary(result)
     : 'Ninguém acertou: todas as apostas foram antes desse horário.';
   setNote(dom['admin-ok'], `Chegada de ${shortDate(date)} registrada às ${time}. ${quem}`);
 
@@ -392,7 +405,7 @@ function renderClock() {
     setReadout(day.arrivalTime, 'clock__readout--late');
     dom['clock-readout'].classList.remove('clock__readout--closed');
     dom['clock-foot'].textContent = day.winners.length
-      ? `${day.winners.length === 1 ? 'Ganhou' : 'Ganharam'}: ${listFmt.format(day.winners)}`
+      ? winnersSummary(day)
       : 'Ninguém acertou: todas as apostas foram antes da chegada.';
     return;
   }
@@ -440,7 +453,7 @@ function renderBet() {
 
 // --- Desenho: a fita do dia -------------------------------------------------
 
-function betRow(bet) {
+function betRow(bet, exactHit) {
   const classes = ['strip__row'];
   if (bet.isWinner) classes.push('strip__row--win');
   else if (bet.isEliminated) classes.push('strip__row--out');
@@ -449,7 +462,9 @@ function betRow(bet) {
   const row = el('li', classes.join(' '));
   row.append(el('span', 'strip__time', bet.time), el('span', 'strip__name', bet.name));
 
-  if (bet.isWinner) row.append(el('span', 'strip__tag', 'ganhou'));
+  if (bet.isWinner) {
+    row.append(el('span', 'strip__tag', `${exactHit ? 'na mosca' : 'ganhou'} +${bet.points}`));
+  }
   else if (bet.isEliminated) row.append(el('span', 'strip__tag', 'fora'));
 
   return row;
@@ -495,7 +510,7 @@ function renderDay() {
       strip.append(arrivalRow(day.arrivalTime));
       arrivalPlaced = true;
     }
-    strip.append(betRow(bet));
+    strip.append(betRow(bet, day.exactHit));
   }
   if (!arrivalPlaced) strip.append(arrivalRow(day.arrivalTime));
 
@@ -512,10 +527,7 @@ function renderDay() {
       `Ninguém acertou: todas as apostas foram antes das ${day.arrivalTime}.`,
     );
   } else {
-    setNote(
-      dom['day-note'],
-      `${day.winners.length === 1 ? 'Ganhou' : 'Ganharam'}: ${listFmt.format(day.winners)}.`,
-    );
+    setNote(dom['day-note'], winnersSummary(day));
   }
 }
 
@@ -526,7 +538,7 @@ function renderRanking() {
   list.replaceChildren();
 
   if (state.ranking.length === 0) {
-    setNote(dom['ranking-note'], 'Ninguém entrou no bolão ainda.');
+    setNote(dom['ranking-note'], 'Ninguém apostou ainda. Quem fizer a primeira aposta entra no ranking.');
     return;
   }
 
@@ -538,12 +550,14 @@ function renderRanking() {
 
   state.ranking.forEach((entry, index) => {
     const classes = ['ranking__row'];
-    if (index === 0 && entry.wins > 0) classes.push('ranking__row--lead');
+    if (index === 0 && entry.points > 0) classes.push('ranking__row--lead');
     if (entry.name === state.userName) classes.push('ranking__row--mine');
 
     const row = el('li', classes.join(' '));
     const score = el('span', 'ranking__score');
     score.append(
+      el('span', 'ranking__points', String(entry.points)),
+      el('span', 'ranking__dot', '·'),
       el('span', 'ranking__wins', String(entry.wins)),
       el('span', 'ranking__dot', '·'),
       el('span', 'ranking__bets', String(entry.totalBets)),

@@ -16,6 +16,11 @@ const BET_CLOSE_MINUTES = 8 * 60 + 30;
 /** O bolão do dia encerra ao meio-dia. */
 const SETTLE_MINUTES = 12 * 60;
 
+/** Acertar o horário exato da chegada. */
+const POINTS_EXACT = 2;
+/** Ganhar pela aposta posterior mais próxima da chegada. */
+const POINTS_CLOSEST = 1;
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -178,6 +183,22 @@ function findWinners(bets, arrivalMinutes) {
 }
 
 /**
+ * Vencedores do dia e quantos pontos cada um leva.
+ *
+ * Acerto exato vale 2; vitória pela aposta posterior mais próxima vale 1.
+ * Todos os vencedores apostaram o mesmo horário, então a pontuação é uma só
+ * para o dia — empatados levam a pontuação cheia, sem dividir.
+ *
+ * @returns {{winners: Array, points: number}} points é 0 quando não há vencedor
+ */
+function scoreDay(bets, arrivalMinutes) {
+  const winners = findWinners(bets, arrivalMinutes);
+  if (winners.length === 0) return { winners, points: 0 };
+  const points = winners[0].minutes === arrivalMinutes ? POINTS_EXACT : POINTS_CLOSEST;
+  return { winners, points };
+}
+
+/**
  * Situação do dia, do ponto de vista de quem está olhando.
  *
  * - `apostas_abertas`: ainda dá para apostar; apostas dos outros escondidas.
@@ -193,10 +214,13 @@ function dayStatus(targetDate, now, arrivalMinutes) {
 }
 
 /**
- * Ranking geral: vitórias por usuário, com o total de apostas como desempate.
+ * Ranking geral: pontos por usuário. Desempate por vitórias e, depois, por
+ * menos apostas feitas — quem chegou lá apostando menos vai na frente. Só
+ * entra quem fez ao menos uma aposta, em qualquer data.
  *
  * Só conta dias já revelados (depois das 08:30 daquele dia) e que tenham
- * horário de chegada registrado — um dia ainda em aberto não pontua.
+ * horário de chegada registrado — um dia ainda em aberto não pontua. Como
+ * tudo sai das apostas e das chegadas, nada guardado precisa ser recalculado.
  *
  * @param {Array<{id:number,name:string}>} users
  * @param {Array<{userId:number,date:string,minutes:number}>} bets todas as apostas
@@ -213,23 +237,30 @@ function computeRanking(users, bets, results, now) {
   }
 
   const winsByUser = new Map();
+  const pointsByUser = new Map();
   for (const result of results) {
     if (!betsAreVisible(result.date, now)) continue;
-    for (const winner of findWinners(betsByDate.get(result.date) ?? [], result.minutes)) {
+    const { winners, points } = scoreDay(betsByDate.get(result.date) ?? [], result.minutes);
+    for (const winner of winners) {
       winsByUser.set(winner.userId, (winsByUser.get(winner.userId) ?? 0) + 1);
+      pointsByUser.set(winner.userId, (pointsByUser.get(winner.userId) ?? 0) + points);
     }
   }
 
+  // Quem nunca apostou não entra no ranking.
   return users
+    .filter((user) => totalByUser.has(user.id))
     .map((user) => ({
       name: user.name,
+      points: pointsByUser.get(user.id) ?? 0,
       wins: winsByUser.get(user.id) ?? 0,
       totalBets: totalByUser.get(user.id) ?? 0,
     }))
     .sort(
       (a, b) =>
+        b.points - a.points ||
         b.wins - a.wins ||
-        b.totalBets - a.totalBets ||
+        a.totalBets - b.totalBets ||
         a.name.localeCompare(b.name, 'pt-BR'),
     );
 }
@@ -238,6 +269,8 @@ module.exports = {
   TIMEZONE,
   BET_CLOSE_MINUTES,
   SETTLE_MINUTES,
+  POINTS_EXACT,
+  POINTS_CLOSEST,
   nowInSaoPaulo,
   saoPauloEpochMs,
   isValidDate,
@@ -250,6 +283,7 @@ module.exports = {
   isDaySettled,
   checkResultWindow,
   findWinners,
+  scoreDay,
   dayStatus,
   computeRanking,
 };

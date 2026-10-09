@@ -57,6 +57,10 @@ async function startApp({ password = ADMIN_PASSWORD, url = ':memory:' } = {}) {
       assert.equal(res.status, 201, `falhou ao criar ${name}: ${JSON.stringify(res.body)}`);
       return res.body.user.name;
     },
+    /** Todos os usuários do banco — o ranking só mostra quem apostou. */
+    async userNames() {
+      return (await store.getAllUsers()).map((u) => u.name);
+    },
     async close() {
       await new Promise((resolve) => server.close(resolve));
       store.close();
@@ -107,8 +111,7 @@ withApp('nome existente entra como o mesmo usuário, sem caixa e sem espaço nas
     assert.equal(dia.body.myBet, '08:45', `"${tentativa}" deveria ver a aposta da Ana`);
   }
 
-  const { body } = await app.call('GET', '/api/ranking');
-  assert.equal(body.ranking.length, 1, 'continua existindo uma Ana só');
+  assert.deepEqual(await app.userNames(), ['Ana'], 'continua existindo uma Ana só');
 });
 
 withApp('o mesmo nome em outro computador continua com uma aposta por dia', async (app) => {
@@ -142,8 +145,7 @@ withApp('duas entradas simultâneas com o mesmo nome novo criam um usuário só'
     'os dois entram no mesmo usuário',
   );
 
-  const { body } = await app.call('GET', '/api/ranking');
-  assert.equal(body.ranking.length, 1);
+  assert.equal((await app.userNames()).length, 1);
 });
 
 withApp('nomes com acento identificam o usuário', async (app) => {
@@ -181,8 +183,7 @@ withApp('não existe endpoint para trocar o nome', async (app) => {
 
   // Entrar com outro nome cria outro usuário; a Ana continua Ana.
   await app.call('POST', '/api/users', { body: { name: 'Ana Maria' } });
-  const { body } = await app.call('GET', '/api/ranking');
-  assert.deepEqual(body.ranking.map((r) => r.name).sort(), ['Ana', 'Ana Maria']);
+  assert.deepEqual(await app.userNames(), ['Ana', 'Ana Maria']);
 });
 
 withApp('sem nome não dá para apostar', async (app) => {
@@ -199,8 +200,7 @@ withApp('nome que ninguém criou não aposta nem é criado pelo caminho', async 
   const session = await app.call('GET', '/api/session', { user: 'Zé' });
   assert.equal(session.body.user, null);
 
-  const { body } = await app.call('GET', '/api/ranking');
-  assert.deepEqual(body.ranking, [], 'só a tela de nome cria usuário');
+  assert.deepEqual(await app.userNames(), [], 'só a tela de nome cria usuário');
 });
 
 withApp('token e header malformado não identificam ninguém', async (app) => {
@@ -262,8 +262,7 @@ test('usuários e apostas de um banco da versão com token continuam valendo', a
     // Gente nova entra no banco antigo sem tropeçar na coluna token.
     assert.equal(await app.join('Bruno'), 'Bruno');
     assert.equal(await app.join('Carla'), 'Carla');
-    const { body } = await app.call('GET', '/api/ranking');
-    assert.deepEqual(body.ranking.map((r) => r.name), ['Ana', 'Bruno', 'Carla']);
+    assert.deepEqual(await app.userNames(), ['Ana', 'Bruno', 'Carla']);
   } finally {
     await app.close();
     try {
@@ -408,11 +407,19 @@ withApp('o exemplo do enunciado roda ponta a ponta', async (app) => {
   });
   assert.equal(admin.status, 200);
   assert.deepEqual(admin.body.winners, ['Bruno']);
+  assert.equal(admin.body.winnerPoints, 1, 'ganhou por proximidade');
+  assert.equal(admin.body.exactHit, false);
 
   const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: ana });
   assert.equal(dia.body.arrivalTime, '08:56');
   assert.equal(dia.body.status, 'com_resultado');
   assert.deepEqual(dia.body.winners, ['Bruno']);
+  assert.equal(dia.body.winnerPoints, 1);
+  assert.equal(dia.body.exactHit, false);
+  assert.deepEqual(
+    dia.body.bets.map((b) => [b.name, b.points]),
+    [['Ana', 0], ['Bruno', 1], ['Carla', 0]],
+  );
 
   const porNome = Object.fromEntries(dia.body.bets.map((b) => [b.name, b]));
   assert.equal(porNome.Ana.isEliminated, true, 'Ana apostou antes da chegada');
@@ -433,6 +440,38 @@ withApp('empate no horário vencedor premia os dois', async (app) => {
     body: { password: ADMIN_PASSWORD, date: HOJE, time: '08:56' },
   });
   assert.deepEqual(admin.body.winners.sort(), ['Ana', 'Bruno']);
+  assert.equal(admin.body.winnerPoints, 1, 'cada empatado leva o ponto cheio');
+});
+
+withApp('acerto exato vale 2 pontos, e empatados na mosca levam os 2', async (app) => {
+  const ana = await app.join('Ana');
+  const bruno = await app.join('Bruno');
+  const carla = await app.join('Carla');
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:56' }, user: ana });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:56' }, user: bruno });
+  await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, user: carla });
+
+  app.setNow(HOJE, '09:00');
+  const admin = await app.call('POST', '/api/admin/result', {
+    body: { password: ADMIN_PASSWORD, date: HOJE, time: '08:56' },
+  });
+  assert.deepEqual(admin.body.winners.sort(), ['Ana', 'Bruno']);
+  assert.equal(admin.body.winnerPoints, 2);
+  assert.equal(admin.body.exactHit, true);
+
+  const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: carla });
+  assert.equal(dia.body.exactHit, true);
+  assert.deepEqual(
+    dia.body.bets.map((b) => [b.name, b.isWinner, b.points]),
+    [['Ana', true, 2], ['Bruno', true, 2], ['Carla', false, 0]],
+  );
+
+  const { body } = await app.call('GET', '/api/ranking');
+  assert.deepEqual(body.ranking, [
+    { name: 'Ana', points: 2, wins: 1, totalBets: 1 },
+    { name: 'Bruno', points: 2, wins: 1, totalBets: 1 },
+    { name: 'Carla', points: 0, wins: 0, totalBets: 1 },
+  ]);
 });
 
 withApp('todas as apostas antes da chegada: dia sem vencedor', async (app) => {
@@ -546,12 +585,12 @@ withApp('admin pode corrigir uma chegada já registrada', async (app) => {
 // Ranking
 // ---------------------------------------------------------------------------
 
-withApp('ranking ordena por vitórias e mostra o total de apostas', async (app) => {
+withApp('ranking ordena por pontos e mostra vitórias e apostas', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
   await app.join('Carla'); // entrou e nunca apostou
 
-  // Dia 1: chegou 08:56 -> Bruno (08:57) ganha.
+  // Dia 1: chegou 08:56 -> Bruno (08:57) ganha por proximidade, +1.
   await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:55' }, user: ana });
   await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:57' }, user: bruno });
   app.setNow(HOJE, '09:00');
@@ -559,7 +598,7 @@ withApp('ranking ordena por vitórias e mostra o total de apostas', async (app) 
     body: { password: ADMIN_PASSWORD, date: HOJE, time: '08:56' },
   });
 
-  // Dia 2: chegou 09:00 -> Bruno (09:00) ganha de novo.
+  // Dia 2: chegou 09:00 -> Bruno (09:00) acerta na mosca, +2.
   await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:30' }, user: ana });
   await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '09:00' }, user: bruno });
   app.setNow(AMANHA, '09:05');
@@ -568,11 +607,12 @@ withApp('ranking ordena por vitórias e mostra o total de apostas', async (app) 
   });
 
   const { body } = await app.call('GET', '/api/ranking');
+  // Carla entrou mas nunca apostou: não aparece no ranking.
   assert.deepEqual(body.ranking, [
-    { name: 'Bruno', wins: 2, totalBets: 2 },
-    { name: 'Ana', wins: 0, totalBets: 2 },
-    { name: 'Carla', wins: 0, totalBets: 0 },
+    { name: 'Bruno', points: 3, wins: 2, totalBets: 2 },
+    { name: 'Ana', points: 0, wins: 0, totalBets: 2 },
   ]);
+  assert.deepEqual(await app.userNames(), ['Ana', 'Bruno', 'Carla'], 'mas continua cadastrada');
 });
 
 withApp('ranking não conta vitória de dia ainda não revelado', async (app) => {
@@ -585,9 +625,9 @@ withApp('ranking não conta vitória de dia ainda não revelado', async (app) =>
   });
 
   const escondido = await app.call('GET', '/api/ranking');
-  assert.deepEqual(escondido.body.ranking, [{ name: 'Ana', wins: 0, totalBets: 1 }]);
+  assert.deepEqual(escondido.body.ranking, [{ name: 'Ana', points: 0, wins: 0, totalBets: 1 }]);
 
   app.setNow(HOJE, '08:30');
   const revelado = await app.call('GET', '/api/ranking');
-  assert.deepEqual(revelado.body.ranking, [{ name: 'Ana', wins: 1, totalBets: 1 }]);
+  assert.deepEqual(revelado.body.ranking, [{ name: 'Ana', points: 1, wins: 1, totalBets: 1 }]);
 });
