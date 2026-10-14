@@ -310,6 +310,16 @@ withApp('aposta em data futura é aceita mesmo depois das 10:00', async (app) =>
   assert.equal(res.body.myBet, '09:15');
 });
 
+withApp('aposta em sábado ou domingo é recusada', async (app) => {
+  const user = await app.join('Ana');
+  // HOJE é quarta: 10/10 é sábado e 11/10, domingo.
+  for (const date of ['2026-10-10', '2026-10-11']) {
+    const res = await app.call('POST', '/api/bets', { body: { date, time: '09:00' }, user });
+    assert.equal(res.status, 403, date);
+    assert.equal(res.body.error.code, 'FIM_DE_SEMANA');
+  }
+});
+
 withApp('a aposta é única por data e não pode ser trocada nem apagada', async (app) => {
   const user = await app.join('Ana');
   assert.equal((await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user })).status, 201);

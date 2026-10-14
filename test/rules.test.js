@@ -13,6 +13,7 @@ const {
   timeToMinutes,
   minutesToTime,
   addDays,
+  isWeekend,
   checkBetWindow,
   betsAreVisible,
   isDaySettled,
@@ -189,6 +190,23 @@ test('registro de chegada aceita hoje e passado, recusa futuro', () => {
   const res = checkResultWindow('2026-10-08', at('2026-10-07', '10:30'));
   assert.equal(res.ok, false);
   assert.equal(res.code, 'DATA_FUTURA');
+});
+
+test('isWeekend reconhece sábado e domingo', () => {
+  // 2026-10-05 é segunda; 2026-10-10 e 2026-10-11, sábado e domingo.
+  for (const dia of ['2026-10-05', '2026-10-07', '2026-10-09']) assert.equal(isWeekend(dia), false, dia);
+  for (const dia of ['2026-10-10', '2026-10-11']) assert.equal(isWeekend(dia), true, dia);
+});
+
+test('fim de semana não aceita aposta nem registro de chegada', () => {
+  const aposta = checkBetWindow('2026-10-10', at('2026-10-07', '07:00'));
+  assert.equal(aposta.ok, false);
+  assert.equal(aposta.code, 'FIM_DE_SEMANA');
+  assert.equal(checkBetWindow('2026-10-12', at('2026-10-07', '07:00')).ok, true, 'segunda segue aberta');
+
+  const chegada = checkResultWindow('2026-10-11', at('2026-10-12', '09:00'));
+  assert.equal(chegada.ok, false);
+  assert.equal(chegada.code, 'FIM_DE_SEMANA');
 });
 
 // ---------------------------------------------------------------------------

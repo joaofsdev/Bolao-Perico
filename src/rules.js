@@ -108,11 +108,25 @@ function addDays(dateStr, days) {
   return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
 }
 
+/** Sábado ou domingo? O Perico só bate ponto de segunda a sexta. */
+function isWeekend(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
+const WEEKEND = {
+  ok: false,
+  code: 'FIM_DE_SEMANA',
+  message: 'O Perico não trabalha no fim de semana. Escolha um dia de segunda a sexta.',
+};
+
 /**
  * Pode apostar nesta data?
  * - Dia atual: só até as 10:00, e só enquanto a chegada não foi registrada.
  * - Datas futuras: sempre.
  * - Datas passadas: nunca.
+ * - Sábado e domingo: nunca.
  *
  * @param {number|null} [arrivalMinutes] chegada registrada para a data, se houver
  */
@@ -127,6 +141,7 @@ function checkBetWindow(targetDate, now, arrivalMinutes = null) {
       message: 'Essa data já passou. Você só pode apostar em hoje (até as 10:00) ou em um dia futuro.',
     };
   }
+  if (isWeekend(targetDate)) return WEEKEND;
   if (targetDate === now.date && now.minutes >= BET_CLOSE_MINUTES) {
     return {
       ok: false,
@@ -174,6 +189,7 @@ function checkResultWindow(targetDate, now) {
       message: 'Não dá para registrar a chegada de um dia que ainda não aconteceu.',
     };
   }
+  if (isWeekend(targetDate)) return WEEKEND;
   return { ok: true };
 }
 
@@ -291,6 +307,7 @@ module.exports = {
   timeToMinutes,
   minutesToTime,
   addDays,
+  isWeekend,
   checkBetWindow,
   betsAreVisible,
   isDaySettled,

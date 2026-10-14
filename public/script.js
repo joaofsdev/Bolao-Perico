@@ -102,6 +102,20 @@ function addDays(isoDate, days) {
   return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
 }
 
+/** Sábado ou domingo? O bolão só roda de segunda a sexta. */
+function isWeekend(isoDate) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
+/** Anda `step` (+1 ou -1) até cair num dia útil; se já for um, fica nele. */
+function toWorkday(isoDate, step) {
+  let date = isoDate;
+  while (isWeekend(date)) date = addDays(date, step);
+  return date;
+}
+
 const weekdayFmt = new Intl.DateTimeFormat('pt-BR', {
   weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'UTC',
 });
@@ -243,13 +257,16 @@ async function selectDate(isoDate) {
   await loadDay();
 }
 
-dom['day-prev'].addEventListener('click', () => selectDate(addDays(state.date, -1)));
-dom['day-next'].addEventListener('click', () => selectDate(addDays(state.date, 1)));
-dom['day-today'].addEventListener('click', () => selectDate(state.today));
+// As setas pulam o fim de semana: de sexta vai direto para segunda.
+dom['day-prev'].addEventListener('click', () => selectDate(toWorkday(addDays(state.date, -1), -1)));
+dom['day-next'].addEventListener('click', () => selectDate(toWorkday(addDays(state.date, 1), 1)));
+dom['day-today'].addEventListener('click', () => selectDate(toWorkday(state.today, 1)));
 
+// O seletor nativo não sabe esconder dias da semana: sábado ou domingo
+// escolhido ali vira a segunda seguinte.
 dom['day-input'].addEventListener('change', () => {
   const value = dom['day-input'].value;
-  if (value) selectDate(value);
+  if (value) selectDate(toWorkday(value, 1));
   else dom['day-input'].value = state.date;
 });
 
@@ -602,11 +619,13 @@ function startTimers() {
 async function enterApp() {
   dom['whoami-name'].textContent = state.userName;
 
-  state.date = state.date ?? state.today;
+  // No fim de semana, abre já na segunda.
+  state.date = state.date ?? toWorkday(state.today, 1);
   dom['day-input'].value = state.date;
   // O seletor nativo não oferece datas passadas; as setas ainda permitem rever.
   dom['day-input'].min = state.today;
-  dom['admin-date'].value = state.today;
+  // No fim de semana, a última chegada possível foi a de sexta.
+  dom['admin-date'].value = toWorkday(state.today, -1);
   dom['admin-date'].max = state.today;
 
   // Carrega antes de mostrar: depois de um "Sair", a tela ainda tem o dia

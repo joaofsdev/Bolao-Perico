@@ -31,6 +31,10 @@ tem rota de edição nem de remoção.
 | Dia atual, depois que o admin registra a chegada | não |
 | Qualquer data futura | sim |
 | Qualquer data passada | não |
+| Sábado ou domingo | não — o Perico só trabalha de segunda a sexta |
+
+O admin também não registra chegada em fim de semana. Na tela, as setas pulam
+sábado e domingo, e um fim de semana escolhido no calendário vira a segunda seguinte.
 
 **O sigilo.** As apostas de um dia só ficam visíveis depois das 10:00 daquele dia —
 antes disso ninguém copia o palpite de ninguém. Até lá a tela mostra só *quantas*
