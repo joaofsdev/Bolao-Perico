@@ -110,7 +110,7 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
       store.countBetsOnDate(date),
     ]);
 
-    // Antes das 08:30 nada do dia é revelado — nem a chegada, nem o vencedor.
+    // Antes das 10:00 nada do dia é revelado — nem a chegada, nem o vencedor.
     const revealedArrival = visible ? arrivalMinutes : null;
     const { winners, points } = scoreDay(dayBets, revealedArrival);
     const winnerIds = new Set(winners.map((bet) => bet.userId));

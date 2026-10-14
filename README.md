@@ -26,14 +26,14 @@ tem rota de edição nem de remoção.
 
 | Quando | Dá para apostar? |
 | --- | --- |
-| Dia atual, antes das 08:30 | sim |
-| Dia atual, 08:30 em diante | não |
+| Dia atual, antes das 10:00 | sim |
+| Dia atual, 10:00 em diante | não |
 | Qualquer data futura | sim |
 | Qualquer data passada | não |
 
-**O sigilo.** As apostas de um dia só ficam visíveis depois das 08:30 daquele dia —
+**O sigilo.** As apostas de um dia só ficam visíveis depois das 10:00 daquele dia —
 antes disso ninguém copia o palpite de ninguém. Até lá a tela mostra só *quantas*
-apostas já entraram. Se o admin registrar a chegada antes das 08:30, o horário também
+apostas já entraram. Se o admin registrar a chegada antes das 10:00, o horário também
 fica escondido até lá.
 
 **O vencedor.** Ganha a aposta mais próxima do horário real que seja **igual ou
@@ -135,9 +135,9 @@ e a conversão para o fuso de São Paulo (incluindo o caso em que 02:00 UTC aind
 anterior em São Paulo).
 
 `test/api.test.js` sobe o app de verdade com banco em memória e **relógio injetado**,
-e testa as regras ponta a ponta: o corte das 08:30 no segundo exato, data passada
+e testa as regras ponta a ponta: o corte das 10:00 no segundo exato, data passada
 bloqueada a qualquer hora, data futura liberada a qualquer hora, aposta única por dia
-(inclusive duas requisições simultâneas), apostas escondidas antes das 08:30, chegada
+(inclusive duas requisições simultâneas), apostas escondidas antes das 10:00, chegada
 registrada cedo que não vaza o resultado, encerramento ao meio-dia sem registro, senha
 de admin, e o ranking. Do lado do usuário: nome novo cria, nome existente entra (sem
 caixa, sem espaço nas pontas, com acento composto ou decomposto), duas entradas
@@ -145,7 +145,7 @@ simultâneas com o mesmo nome novo, nome desconhecido que não aposta, e um banc
 formato antigo, com tokens, cujos usuários e apostas continuam valendo.
 
 O relógio injetado é o que torna isso testável: `createApp()` recebe um `clock`, então
-os testes andam para as 08:29:59 e para as 08:30:00 sem esperar o dia amanhecer.
+os testes andam para as 09:59:59 e para as 10:00:00 sem esperar o dia amanhecer.
 
 ## Como está organizado
 
@@ -272,7 +272,7 @@ instâncias com dois arquivos viram dois bolões diferentes.
 
 **Render free** — funciona, mas precisa do Turso do mesmo jeito (não tem disco no plano
 grátis) **e** hiberna após 15 minutos parado, levando cerca de um minuto para acordar.
-Num app cujo prazo fecha às 08:30, quem chegar primeiro às 08:25 espera esse minuto.
+Num app cujo prazo fecha às 10:00, quem chegar primeiro às 09:55 espera esse minuto.
 É estritamente pior que a Vercel aqui.
 
 **VM com Docker** — grátis de verdade numa máquina Always Free (Oracle Cloud, por
@@ -314,12 +314,12 @@ sqlite3 /data/bolao.db ".backup '/data/bolao-$(date +%F).db'"
 
 ## Decisões que valem explicar
 
-**Por que o relógio do servidor.** O prazo das 08:30 é a única coisa que separa um
+**Por que o relógio do servidor.** O prazo das 10:00 é a única coisa que separa um
 palpite de um chute com resposta na mão. Relógio de navegador se muda em dois cliques,
 então nenhuma validação depende dele. O front recebe o instante do servidor em toda
 resposta, mede a diferença e usa isso só para animar a contagem regressiva.
 
-**Por que a chegada fica escondida antes das 08:30.** O admin pode registrar a chegada
+**Por que a chegada fica escondida antes das 10:00.** O admin pode registrar a chegada
 assim que o Perico aparece. Se o Perico chegar 08:05, mostrar isso às 08:06 entregaria
 o resultado para quem ainda não apostou. Então a chegada e o vencedor seguem a mesma
 regra de visibilidade das apostas.

@@ -545,7 +545,7 @@ function renderRanking() {
   const temVitoria = state.ranking.some((row) => row.wins > 0);
   setNote(
     dom['ranking-note'],
-    temVitoria ? '' : 'Ninguém venceu ainda. O primeiro resultado sai depois das 08:30.',
+    temVitoria ? '' : 'Ninguém venceu ainda. O primeiro resultado sai depois das 10:00.',
   );
 
   state.ranking.forEach((entry, index) => {

@@ -82,8 +82,8 @@ test('addDays atravessa viradas de mês e de ano', () => {
 // ---------------------------------------------------------------------------
 
 test('nowInSaoPaulo converte instantes UTC para o dia e a hora de São Paulo', () => {
-  // 2026-10-07T11:30:00Z = 08:30 em São Paulo (UTC-3).
-  const n = nowInSaoPaulo(new Date('2026-10-07T11:30:00Z'));
+  // 2026-10-07T13:00:00Z = 10:00 em São Paulo (UTC-3).
+  const n = nowInSaoPaulo(new Date('2026-10-07T13:00:00Z'));
   assert.equal(n.date, '2026-10-07');
   assert.equal(n.minutes, BET_CLOSE_MINUTES);
 
@@ -95,7 +95,7 @@ test('nowInSaoPaulo converte instantes UTC para o dia e a hora de São Paulo', (
 
 test('saoPauloEpochMs e nowInSaoPaulo fecham a volta', () => {
   const epoch = saoPauloEpochMs('2026-10-07', BET_CLOSE_MINUTES);
-  assert.equal(new Date(epoch).toISOString(), '2026-10-07T11:30:00.000Z');
+  assert.equal(new Date(epoch).toISOString(), '2026-10-07T13:00:00.000Z');
   const back = nowInSaoPaulo(new Date(epoch));
   assert.equal(back.date, '2026-10-07');
   assert.equal(back.minutes, BET_CLOSE_MINUTES);
@@ -105,18 +105,18 @@ test('saoPauloEpochMs e nowInSaoPaulo fecham a volta', () => {
 // Prazo para apostar
 // ---------------------------------------------------------------------------
 
-test('aposta no dia atual é aceita antes das 08:30', () => {
+test('aposta no dia atual é aceita antes das 10:00', () => {
   assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '06:00')).ok, true);
-  assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '08:29', 59)).ok, true);
+  assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '09:59', 59)).ok, true);
 });
 
-test('aposta no dia atual é bloqueada a partir das 08:30 em ponto', () => {
-  const res = checkBetWindow('2026-10-07', at('2026-10-07', '08:30'));
+test('aposta no dia atual é bloqueada a partir das 10:00 em ponto', () => {
+  const res = checkBetWindow('2026-10-07', at('2026-10-07', '10:00'));
   assert.equal(res.ok, false);
   assert.equal(res.code, 'PRAZO_ENCERRADO');
-  assert.match(res.message, /08:30/);
+  assert.match(res.message, /10:00/);
 
-  assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '08:31')).ok, false);
+  assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '10:01')).ok, false);
   assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '23:59')).ok, false);
 });
 
@@ -145,9 +145,9 @@ test('checkBetWindow recusa data malformada antes de olhar o prazo', () => {
 // Visibilidade das apostas (ninguém copia)
 // ---------------------------------------------------------------------------
 
-test('apostas do dia ficam escondidas até as 08:30 e aparecem depois', () => {
-  assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '08:29', 59)), false);
-  assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '08:30')), true);
+test('apostas do dia ficam escondidas até as 10:00 e aparecem depois', () => {
+  assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '09:59', 59)), false);
+  assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '10:00')), true);
   assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '12:00')), true);
 });
 
@@ -172,9 +172,9 @@ test('dia passado já está encerrado; dia futuro ainda não', () => {
 });
 
 test('registro de chegada aceita hoje e passado, recusa futuro', () => {
-  assert.equal(checkResultWindow('2026-10-07', at('2026-10-07', '09:00')).ok, true);
-  assert.equal(checkResultWindow('2026-10-06', at('2026-10-07', '09:00')).ok, true);
-  const res = checkResultWindow('2026-10-08', at('2026-10-07', '09:00'));
+  assert.equal(checkResultWindow('2026-10-07', at('2026-10-07', '10:30')).ok, true);
+  assert.equal(checkResultWindow('2026-10-06', at('2026-10-07', '10:30')).ok, true);
+  const res = checkResultWindow('2026-10-08', at('2026-10-07', '10:30'));
   assert.equal(res.ok, false);
   assert.equal(res.code, 'DATA_FUTURA');
 });
@@ -324,7 +324,7 @@ test('ranking soma os pontos de dias passados e de hoje, já revelados', () => {
       [2, '2026-10-07', '08:41'], [3, '2026-10-07', '08:41'], // chegou 08:41: Bruno e Carla na mosca (+2 cada)
     ),
     arrivals(['2026-10-05', '09:00'], ['2026-10-06', '08:46'], ['2026-10-07', '08:41']),
-    at('2026-10-07', '09:00'),
+    at('2026-10-07', '10:30'),
   );
   assert.deepEqual(ranking, [
     { name: 'Ana', points: 3, wins: 2, totalBets: 2 },
@@ -349,7 +349,7 @@ test('ranking ordena por pontos, depois vitórias, depois menos apostas', () => 
       ['2026-10-01', '09:00'], ['2026-10-02', '09:05'], ['2026-10-03', '09:05'],
       ['2026-10-04', '09:05'], ['2026-10-05', '09:05'], ['2026-10-06', '09:05'],
     ),
-    at('2026-10-07', '09:00'),
+    at('2026-10-07', '10:30'),
   );
   assert.deepEqual(
     ranking.map((r) => [r.name, r.points, r.wins, r.totalBets]),
@@ -371,7 +371,7 @@ test('quem nunca apostou não entra no ranking', () => {
       [3, '2026-10-08', '09:00'], // Carla só apostou num dia que ainda não chegou
     ),
     arrivals(['2026-10-06', '09:00']),
-    at('2026-10-07', '09:00'),
+    at('2026-10-07', '10:30'),
   );
   assert.deepEqual(ranking, [
     { name: 'Bruno', points: 1, wins: 1, totalBets: 1 },
@@ -382,15 +382,15 @@ test('quem nunca apostou não entra no ranking', () => {
 });
 
 test('ranking vazio enquanto ninguém apostou', () => {
-  assert.deepEqual(computeRanking(USERS, [], [], at('2026-10-07', '09:00')), []);
+  assert.deepEqual(computeRanking(USERS, [], [], at('2026-10-07', '10:30')), []);
 });
 
-test('ranking não pontua dia de hoje antes das 08:30', () => {
+test('ranking não pontua dia de hoje antes das 10:00', () => {
   const dia = rankBets([1, '2026-10-07', '08:05']);
   const chegada = arrivals(['2026-10-07', '08:05']);
   const cedo = computeRanking(USERS.slice(0, 1), dia, chegada, at('2026-10-07', '08:10'));
   assert.deepEqual(cedo, [{ name: 'Ana', points: 0, wins: 0, totalBets: 1 }]);
-  const revelado = computeRanking(USERS.slice(0, 1), dia, chegada, at('2026-10-07', '08:30'));
+  const revelado = computeRanking(USERS.slice(0, 1), dia, chegada, at('2026-10-07', '10:00'));
   assert.deepEqual(revelado, [{ name: 'Ana', points: 2, wins: 1, totalBets: 1 }]);
 });
 
@@ -401,15 +401,15 @@ test('ranking não pontua dia de hoje antes das 08:30', () => {
 test('dayStatus acompanha a linha do tempo do dia', () => {
   const hoje = '2026-10-07';
   assert.equal(dayStatus(hoje, at(hoje, '07:00'), null), 'apostas_abertas');
-  assert.equal(dayStatus(hoje, at(hoje, '09:00'), null), 'aguardando_chegada');
-  assert.equal(dayStatus(hoje, at(hoje, '09:00'), timeToMinutes('08:56')), 'com_resultado');
+  assert.equal(dayStatus(hoje, at(hoje, '10:30'), null), 'aguardando_chegada');
+  assert.equal(dayStatus(hoje, at(hoje, '10:30'), timeToMinutes('08:56')), 'com_resultado');
   assert.equal(dayStatus(hoje, at(hoje, '12:00'), null), 'sem_resultado');
   assert.equal(dayStatus(hoje, at(hoje, '12:00'), timeToMinutes('08:56')), 'com_resultado');
 });
 
-test('dayStatus esconde resultado de dia futuro e de hoje antes das 08:30', () => {
+test('dayStatus esconde resultado de dia futuro e de hoje antes das 10:00', () => {
   assert.equal(dayStatus('2026-10-08', at('2026-10-07', '20:00'), null), 'apostas_abertas');
-  // Mesmo que o admin registre a chegada antes das 08:30, nada é revelado:
+  // Mesmo que o admin registre a chegada antes das 10:00, nada é revelado:
   // senão daria para apostar sabendo a resposta.
   assert.equal(dayStatus('2026-10-07', at('2026-10-07', '08:10'), timeToMinutes('08:05')), 'apostas_abertas');
 });

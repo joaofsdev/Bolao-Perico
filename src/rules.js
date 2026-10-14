@@ -11,8 +11,8 @@
 
 const TIMEZONE = 'America/Sao_Paulo';
 
-/** Apostas do dia fecham às 08:30 em ponto. */
-const BET_CLOSE_MINUTES = 8 * 60 + 30;
+/** Apostas do dia fecham às 10:00 em ponto. */
+const BET_CLOSE_MINUTES = 10 * 60;
 /** O bolão do dia encerra ao meio-dia. */
 const SETTLE_MINUTES = 12 * 60;
 
@@ -110,7 +110,7 @@ function addDays(dateStr, days) {
 
 /**
  * Pode apostar nesta data?
- * - Dia atual: só até as 08:30.
+ * - Dia atual: só até as 10:00.
  * - Datas futuras: sempre.
  * - Datas passadas: nunca.
  */
@@ -122,20 +122,20 @@ function checkBetWindow(targetDate, now) {
     return {
       ok: false,
       code: 'DATA_PASSADA',
-      message: 'Essa data já passou. Você só pode apostar em hoje (até as 08:30) ou em um dia futuro.',
+      message: 'Essa data já passou. Você só pode apostar em hoje (até as 10:00) ou em um dia futuro.',
     };
   }
   if (targetDate === now.date && now.minutes >= BET_CLOSE_MINUTES) {
     return {
       ok: false,
       code: 'PRAZO_ENCERRADO',
-      message: 'As apostas de hoje fecharam às 08:30. Aposte em um dia futuro.',
+      message: 'As apostas de hoje fecharam às 10:00. Aposte em um dia futuro.',
     };
   }
   return { ok: true };
 }
 
-/** As apostas de um dia só aparecem para todos depois das 08:30 daquele dia. */
+/** As apostas de um dia só aparecem para todos depois das 10:00 daquele dia. */
 function betsAreVisible(targetDate, now) {
   if (targetDate < now.date) return true;
   if (targetDate > now.date) return false;
@@ -218,7 +218,7 @@ function dayStatus(targetDate, now, arrivalMinutes) {
  * menos apostas feitas — quem chegou lá apostando menos vai na frente. Só
  * entra quem fez ao menos uma aposta, em qualquer data.
  *
- * Só conta dias já revelados (depois das 08:30 daquele dia) e que tenham
+ * Só conta dias já revelados (depois das 10:00 daquele dia) e que tenham
  * horário de chegada registrado — um dia ainda em aberto não pontua. Como
  * tudo sai das apostas e das chegadas, nada guardado precisa ser recalculado.
  *
