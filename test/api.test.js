@@ -506,7 +506,7 @@ withApp('meio-dia sem chegada registrada: dia sem vencedor', async (app) => {
   assert.deepEqual(depois.body.winners, []);
 });
 
-withApp('chegada registrada antes das 10:00 não vaza o resultado', async (app) => {
+withApp('registrar a chegada antes das 10:00 fecha as apostas e revela o dia', async (app) => {
   const ana = await app.join('Ana');
   const bruno = await app.join('Bruno');
   await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:10' }, user: ana });
@@ -517,16 +517,20 @@ withApp('chegada registrada antes das 10:00 não vaza o resultado', async (app) 
   });
   assert.equal(admin.status, 200);
 
-  // Bruno ainda pode apostar — e não pode descobrir que já deu 08:05.
   const dia = await app.call('GET', `/api/day?date=${HOJE}`, { user: bruno });
-  assert.equal(dia.body.arrivalTime, null, 'a chegada fica escondida até as 10:00');
-  assert.deepEqual(dia.body.winners, []);
-  assert.equal(dia.body.status, 'apostas_abertas');
+  assert.equal(dia.body.arrivalTime, '08:05', 'a chegada aparece na hora, sem esperar as 10:00');
+  assert.equal(dia.body.status, 'com_resultado');
+  assert.equal(dia.body.betsVisible, true);
+  assert.deepEqual(dia.body.winners, ['Ana']);
+  assert.equal(dia.body.betWindow.ok, false);
 
-  app.setNow(HOJE, '10:00');
-  const revelado = await app.call('GET', `/api/day?date=${HOJE}`, { user: bruno });
-  assert.equal(revelado.body.arrivalTime, '08:05');
-  assert.deepEqual(revelado.body.winners, ['Ana']);
+  const tarde = await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:05' }, user: bruno });
+  assert.equal(tarde.status, 403);
+  assert.equal(tarde.body.error.code, 'CHEGADA_REGISTRADA');
+
+  // O dia seguinte segue aberto.
+  const amanha = await app.call('POST', '/api/bets', { body: { date: AMANHA, time: '08:30' }, user: bruno });
+  assert.equal(amanha.status, 201);
 });
 
 // ---------------------------------------------------------------------------
@@ -615,7 +619,7 @@ withApp('ranking ordena por pontos e mostra vitórias e apostas', async (app) =>
   assert.deepEqual(await app.userNames(), ['Ana', 'Bruno', 'Carla'], 'mas continua cadastrada');
 });
 
-withApp('ranking não conta vitória de dia ainda não revelado', async (app) => {
+withApp('ranking conta a vitória assim que a chegada é registrada', async (app) => {
   const ana = await app.join('Ana');
   await app.call('POST', '/api/bets', { body: { date: HOJE, time: '08:45' }, user: ana });
 
@@ -624,10 +628,6 @@ withApp('ranking não conta vitória de dia ainda não revelado', async (app) =>
     body: { password: ADMIN_PASSWORD, date: HOJE, time: '08:40' },
   });
 
-  const escondido = await app.call('GET', '/api/ranking');
-  assert.deepEqual(escondido.body.ranking, [{ name: 'Ana', points: 0, wins: 0, totalBets: 1 }]);
-
-  app.setNow(HOJE, '10:00');
   const revelado = await app.call('GET', '/api/ranking');
   assert.deepEqual(revelado.body.ranking, [{ name: 'Ana', points: 1, wins: 1, totalBets: 1 }]);
 });

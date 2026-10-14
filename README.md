@@ -26,15 +26,16 @@ tem rota de edição nem de remoção.
 
 | Quando | Dá para apostar? |
 | --- | --- |
-| Dia atual, antes das 10:00 | sim |
+| Dia atual, antes das 10:00 e sem chegada registrada | sim |
 | Dia atual, 10:00 em diante | não |
+| Dia atual, depois que o admin registra a chegada | não |
 | Qualquer data futura | sim |
 | Qualquer data passada | não |
 
 **O sigilo.** As apostas de um dia só ficam visíveis depois das 10:00 daquele dia —
 antes disso ninguém copia o palpite de ninguém. Até lá a tela mostra só *quantas*
-apostas já entraram. Se o admin registrar a chegada antes das 10:00, o horário também
-fica escondido até lá.
+apostas já entraram. Se o admin registrar a chegada antes das 10:00, as apostas do dia
+fecham e tudo aparece na hora: a chegada, as apostas e o vencedor.
 
 **O vencedor.** Ganha a aposta mais próxima do horário real que seja **igual ou
 posterior** a ele. Quem apostou antes está eliminado, porque o tempo não volta para
@@ -138,7 +139,7 @@ anterior em São Paulo).
 e testa as regras ponta a ponta: o corte das 10:00 no segundo exato, data passada
 bloqueada a qualquer hora, data futura liberada a qualquer hora, aposta única por dia
 (inclusive duas requisições simultâneas), apostas escondidas antes das 10:00, chegada
-registrada cedo que não vaza o resultado, encerramento ao meio-dia sem registro, senha
+registrada cedo que fecha as apostas e revela o dia, encerramento ao meio-dia sem registro, senha
 de admin, e o ranking. Do lado do usuário: nome novo cria, nome existente entra (sem
 caixa, sem espaço nas pontas, com acento composto ou decomposto), duas entradas
 simultâneas com o mesmo nome novo, nome desconhecido que não aposta, e um banco no
@@ -319,10 +320,10 @@ palpite de um chute com resposta na mão. Relógio de navegador se muda em dois 
 então nenhuma validação depende dele. O front recebe o instante do servidor em toda
 resposta, mede a diferença e usa isso só para animar a contagem regressiva.
 
-**Por que a chegada fica escondida antes das 10:00.** O admin pode registrar a chegada
-assim que o Perico aparece. Se o Perico chegar 08:05, mostrar isso às 08:06 entregaria
-o resultado para quem ainda não apostou. Então a chegada e o vencedor seguem a mesma
-regra de visibilidade das apostas.
+**Por que registrar a chegada fecha as apostas.** O admin registra a chegada assim que
+o Perico aparece. A partir daí todo mundo no escritório já sabe a resposta, então deixar
+apostar até as 10:00 só premiaria quem apostasse por último. Registrou, fechou — e, sem
+nada mais para esconder, a chegada, as apostas e o vencedor aparecem na hora.
 
 **Por que o ranking é calculado na hora.** Não existe tabela de vitórias. O vencedor sai
 das apostas e do horário de chegada toda vez que alguém pede o ranking. Assim uma

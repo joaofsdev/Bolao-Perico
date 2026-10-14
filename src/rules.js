@@ -110,11 +110,13 @@ function addDays(dateStr, days) {
 
 /**
  * Pode apostar nesta data?
- * - Dia atual: só até as 10:00.
+ * - Dia atual: só até as 10:00, e só enquanto a chegada não foi registrada.
  * - Datas futuras: sempre.
  * - Datas passadas: nunca.
+ *
+ * @param {number|null} [arrivalMinutes] chegada registrada para a data, se houver
  */
-function checkBetWindow(targetDate, now) {
+function checkBetWindow(targetDate, now, arrivalMinutes = null) {
   if (!isValidDate(targetDate)) {
     return { ok: false, code: 'DATA_INVALIDA', message: 'Data inválida.' };
   }
@@ -132,13 +134,24 @@ function checkBetWindow(targetDate, now) {
       message: 'As apostas de hoje fecharam às 10:00. Aposte em um dia futuro.',
     };
   }
+  if (targetDate === now.date && arrivalMinutes !== null && arrivalMinutes !== undefined) {
+    return {
+      ok: false,
+      code: 'CHEGADA_REGISTRADA',
+      message: 'O Perico já bateu o ponto hoje, então as apostas fecharam. Aposte em um dia futuro.',
+    };
+  }
   return { ok: true };
 }
 
-/** As apostas de um dia só aparecem para todos depois das 10:00 daquele dia. */
-function betsAreVisible(targetDate, now) {
+/**
+ * As apostas de um dia só aparecem para todos depois das 10:00 daquele dia,
+ * ou antes disso, assim que a chegada é registrada — aí já não há o que esconder.
+ */
+function betsAreVisible(targetDate, now, arrivalMinutes = null) {
   if (targetDate < now.date) return true;
   if (targetDate > now.date) return false;
+  if (arrivalMinutes !== null && arrivalMinutes !== undefined) return true;
   return now.minutes >= BET_CLOSE_MINUTES;
 }
 
@@ -207,7 +220,7 @@ function scoreDay(bets, arrivalMinutes) {
  * - `sem_resultado`: passou do meio-dia sem chegada registrada — dia sem vencedor.
  */
 function dayStatus(targetDate, now, arrivalMinutes) {
-  const visible = betsAreVisible(targetDate, now);
+  const visible = betsAreVisible(targetDate, now, arrivalMinutes);
   if (visible && arrivalMinutes !== null && arrivalMinutes !== undefined) return 'com_resultado';
   if (!visible) return 'apostas_abertas';
   return isDaySettled(targetDate, now) ? 'sem_resultado' : 'aguardando_chegada';
@@ -218,8 +231,8 @@ function dayStatus(targetDate, now, arrivalMinutes) {
  * menos apostas feitas — quem chegou lá apostando menos vai na frente. Só
  * entra quem fez ao menos uma aposta, em qualquer data.
  *
- * Só conta dias já revelados (depois das 10:00 daquele dia) e que tenham
- * horário de chegada registrado — um dia ainda em aberto não pontua. Como
+ * Só conta dias com horário de chegada registrado — registrar a chegada
+ * revela o dia na hora, então um dia ainda em aberto não pontua. Como
  * tudo sai das apostas e das chegadas, nada guardado precisa ser recalculado.
  *
  * @param {Array<{id:number,name:string}>} users
@@ -239,7 +252,7 @@ function computeRanking(users, bets, results, now) {
   const winsByUser = new Map();
   const pointsByUser = new Map();
   for (const result of results) {
-    if (!betsAreVisible(result.date, now)) continue;
+    if (!betsAreVisible(result.date, now, result.minutes)) continue;
     const { winners, points } = scoreDay(betsByDate.get(result.date) ?? [], result.minutes);
     for (const winner of winners) {
       winsByUser.set(winner.userId, (winsByUser.get(winner.userId) ?? 0) + 1);

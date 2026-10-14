@@ -120,6 +120,13 @@ test('aposta no dia atual é bloqueada a partir das 10:00 em ponto', () => {
   assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '23:59')).ok, false);
 });
 
+test('aposta no dia atual é bloqueada assim que a chegada é registrada, mesmo antes das 10:00', () => {
+  const res = checkBetWindow('2026-10-07', at('2026-10-07', '08:15'), timeToMinutes('08:05'));
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 'CHEGADA_REGISTRADA');
+  assert.equal(checkBetWindow('2026-10-07', at('2026-10-07', '08:15'), null).ok, true, 'sem chegada, segue aberta');
+});
+
 test('aposta em data passada é sempre bloqueada, mesmo de madrugada', () => {
   for (const hora of ['00:00', '07:00', '08:29', '12:00', '23:59']) {
     const res = checkBetWindow('2026-10-06', at('2026-10-07', hora));
@@ -149,6 +156,11 @@ test('apostas do dia ficam escondidas até as 10:00 e aparecem depois', () => {
   assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '09:59', 59)), false);
   assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '10:00')), true);
   assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '12:00')), true);
+});
+
+test('apostas do dia aparecem assim que a chegada é registrada, mesmo antes das 10:00', () => {
+  assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '08:15'), timeToMinutes('08:05')), true);
+  assert.equal(betsAreVisible('2026-10-07', at('2026-10-07', '08:15'), null), false);
 });
 
 test('apostas de dia futuro ficam escondidas; de dia passado ficam visíveis', () => {
@@ -385,13 +397,11 @@ test('ranking vazio enquanto ninguém apostou', () => {
   assert.deepEqual(computeRanking(USERS, [], [], at('2026-10-07', '10:30')), []);
 });
 
-test('ranking não pontua dia de hoje antes das 10:00', () => {
+test('ranking pontua o dia de hoje assim que a chegada é registrada, mesmo antes das 10:00', () => {
   const dia = rankBets([1, '2026-10-07', '08:05']);
   const chegada = arrivals(['2026-10-07', '08:05']);
   const cedo = computeRanking(USERS.slice(0, 1), dia, chegada, at('2026-10-07', '08:10'));
-  assert.deepEqual(cedo, [{ name: 'Ana', points: 0, wins: 0, totalBets: 1 }]);
-  const revelado = computeRanking(USERS.slice(0, 1), dia, chegada, at('2026-10-07', '10:00'));
-  assert.deepEqual(revelado, [{ name: 'Ana', points: 2, wins: 1, totalBets: 1 }]);
+  assert.deepEqual(cedo, [{ name: 'Ana', points: 2, wins: 1, totalBets: 1 }]);
 });
 
 // ---------------------------------------------------------------------------
@@ -407,9 +417,8 @@ test('dayStatus acompanha a linha do tempo do dia', () => {
   assert.equal(dayStatus(hoje, at(hoje, '12:00'), timeToMinutes('08:56')), 'com_resultado');
 });
 
-test('dayStatus esconde resultado de dia futuro e de hoje antes das 10:00', () => {
+test('dayStatus: dia futuro fica aberto; hoje mostra o resultado assim que a chegada é registrada', () => {
   assert.equal(dayStatus('2026-10-08', at('2026-10-07', '20:00'), null), 'apostas_abertas');
-  // Mesmo que o admin registre a chegada antes das 10:00, nada é revelado:
-  // senão daria para apostar sabendo a resposta.
-  assert.equal(dayStatus('2026-10-07', at('2026-10-07', '08:10'), timeToMinutes('08:05')), 'apostas_abertas');
+  assert.equal(dayStatus('2026-10-07', at('2026-10-07', '08:10'), null), 'apostas_abertas');
+  assert.equal(dayStatus('2026-10-07', at('2026-10-07', '08:10'), timeToMinutes('08:05')), 'com_resultado');
 });

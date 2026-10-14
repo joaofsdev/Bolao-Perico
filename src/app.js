@@ -99,18 +99,19 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
 
   /** Monta o retrato de um dia para quem está olhando (ou para ninguém). */
   async function describeDay(date, user, now) {
-    const visible = betsAreVisible(date, now);
-
-    // Agora cada consulta é um round trip até o Turso: dispara junto o que
-    // não depende do resultado das outras.
-    const [arrivalMinutes, dayBets, myBet, totalBets] = await Promise.all([
+    // Agora cada consulta é um round trip até o Turso: dispara tudo junto. As
+    // apostas vêm mesmo que ainda estejam escondidas — só a chegada diz se
+    // podem ser mostradas, e esperar por ela custaria mais uma ida.
+    const [arrivalMinutes, allBets, myBet, totalBets] = await Promise.all([
       store.getArrivalMinutes(date),
-      visible ? store.getBetsOnDate(date) : [],
+      store.getBetsOnDate(date),
       user ? store.getBet(user.id, date) : null,
       store.countBetsOnDate(date),
     ]);
 
-    // Antes das 10:00 nada do dia é revelado — nem a chegada, nem o vencedor.
+    // Antes das 10:00, e sem chegada registrada, nada do dia é revelado.
+    const visible = betsAreVisible(date, now, arrivalMinutes);
+    const dayBets = visible ? allBets : [];
     const revealedArrival = visible ? arrivalMinutes : null;
     const { winners, points } = scoreDay(dayBets, revealedArrival);
     const winnerIds = new Set(winners.map((bet) => bet.userId));
@@ -124,7 +125,7 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
       settleEpochMs: saoPauloEpochMs(date, SETTLE_MINUTES),
       betCloseTime: minutesToTime(BET_CLOSE_MINUTES),
       settleTime: minutesToTime(SETTLE_MINUTES),
-      betWindow: checkBetWindow(date, now),
+      betWindow: checkBetWindow(date, now, arrivalMinutes),
       betsVisible: visible,
       settled: isDaySettled(date, now),
       status: dayStatus(date, now, revealedArrival),
@@ -222,7 +223,8 @@ function createApp({ store, adminPassword, clock = () => new Date() }) {
 
     // O prazo é decidido aqui, com o relógio do servidor. O que o navegador
     // acha da hora não entra na conta.
-    const window = checkBetWindow(date, now);
+    // Registrou a chegada, acabou a aposta do dia — mesmo antes das 10:00.
+    const window = checkBetWindow(date, now, await store.getArrivalMinutes(date));
     if (!window.ok) {
       return fail(res, 403, window.code, window.message);
     }
